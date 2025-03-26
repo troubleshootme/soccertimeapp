@@ -112,37 +112,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
               
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Period ended while app was in background. Tap Resume to continue.'),
-                  duration: Duration(seconds: 5),
-                  action: SnackBarAction(
-                    label: 'Resume',
-                    onPressed: () {
-                      _safeSetState(() {
-                        _isPaused = false;
-                        appState.session.isPaused = false;
-                        appState.session.matchRunning = true;
-                        
-                        // Store the list of players to reactivate before we clear it
-                        final playersToReactivate = List<String>.from(appState.session.activeBeforePause);
-                        
-                        // Reactivate players that were active before pause
-                        for (var playerName in playersToReactivate) {
-                          if (appState.session.players.containsKey(playerName)) {
-                            // Use togglePlayer only if the player is not already active
-                            if (!appState.session.players[playerName]!.active) {
-                              appState.togglePlayer(playerName);
-                            }
-                          }
-                        }
-                        
-                        // Clear the list after reactivating
-                        appState.session.activeBeforePause = [];
-                      });
-                      
-                      // Explicitly restart the match timer
-                      _startMatchTimer();
-                    },
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Period ended while app was in background.'),
+                      Text('Tap Start to continue'),
+                    ],
                   ),
+                  duration: Duration(seconds: 5),
                 ),
               );
             }
@@ -1583,7 +1561,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                               Positioned(
                                 left: MediaQuery.of(context).size.width / 2 + 64,
                                 top: 4,
-                                child: Padding(
+                                child: appState.session.enableMatchDuration ? Padding(
                                   padding: EdgeInsets.all(6),
                                   child: Container(
                                     padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -1602,7 +1580,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                                       ),
                                     ),
                                   ),
-                                ),
+                                ) : SizedBox.shrink(),
                               ),
                             ],
                           ),

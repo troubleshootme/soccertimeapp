@@ -536,9 +536,6 @@ class AppState with ChangeNotifier {
     _session.isPaused = false;
     _periodsTransitioning = false;
     
-    // Log the reset event
-    logMatchEvent("All times and log reset");
-    
     // Save the reset state
     await saveSession();
     
@@ -1158,14 +1155,6 @@ class AppState with ChangeNotifier {
         player.active = false;
       }
     }
-
-    // Log the end of current period
-    final periodName = _session.matchSegments == 2 ? 'Half' : 'Quarter';
-    final ordinal = getOrdinal(_session.currentPeriod);
-    logMatchEvent(
-      '$ordinal $periodName Ended',
-      entryType: 'period_end'
-    );
 
     // Increment period counter
     _session.currentPeriod++;

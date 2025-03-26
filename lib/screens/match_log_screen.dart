@@ -6,6 +6,7 @@ import '../models/match_log_entry.dart';
 import '../utils/app_themes.dart';
 import '../services/translation_service.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class MatchLogScreen extends StatefulWidget {
   @override
@@ -109,8 +110,13 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
       itemBuilder: (context, index) {
         final entry = logs[index];
         
-        // Determine icon based on the event description
-        IconData icon = _getEventIcon(entry.details);
+        // Determine if this is a goal entry
+        final isGoal = entry.details.toLowerCase().contains('goal') || entry.entryType?.toLowerCase() == 'goal';
+        
+        // Determine if this is a whistle entry (match start, period changes, match complete)
+        final isWhistleEntry = entry.entryType?.toLowerCase() == 'match_start' ||
+                             entry.entryType?.toLowerCase() == 'period_transition' ||
+                             entry.entryType?.toLowerCase() == 'match_end';
         
         // Determine entry type for styling
         final isPeriodTransition = entry.entryType?.toLowerCase() == 'period_transition';
@@ -119,7 +125,11 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
         final isMatchComplete = entry.details.toLowerCase().contains(context.tr('match.match_complete').toLowerCase());
         final isPlayerEnter = entry.details.toLowerCase().contains(context.tr('match.entered_game').toLowerCase());
         final isPlayerExit = entry.details.toLowerCase().contains(context.tr('match.left_game').toLowerCase());
-        final isGoal = entry.details.toLowerCase().contains('goal') || entry.entryType?.toLowerCase() == 'goal';
+        
+        // Skip reset entries
+        if (entry.details.toLowerCase().contains('reset')) {
+          return SizedBox.shrink();
+        }
         
         // Determine time container color based on entry type
         Color timeContainerColor;
@@ -158,16 +168,64 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
           color: isDark ? Colors.grey[850] : Colors.white,
           elevation: 1,
           child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: isDark 
-                  ? AppThemes.darkSecondaryBlue.withOpacity(0.7)
-                  : AppThemes.lightSecondaryBlue.withOpacity(0.7),
-              child: Icon(
-                icon,
-                color: Colors.white,
-                size: 18,
-              ),
-            ),
+            leading: isGoal 
+              ? Container(
+                  width: 40,
+                  height: 40,
+                  padding: EdgeInsets.all(8),
+                  child: SvgPicture.asset(
+                    'assets/images/soccerball.svg',
+                  ),
+                )
+              : isWhistleEntry
+                ? Container(
+                    width: 40,
+                    height: 40,
+                    padding: EdgeInsets.all(8),
+                    child: SvgPicture.asset(
+                      'assets/images/white_whistle.svg',
+                      colorFilter: ColorFilter.mode(
+                        Colors.white,
+                        BlendMode.srcIn
+                      ),
+                    ),
+                  )
+              : isPlayerEnter
+                ? Container(
+                    width: 40,
+                    height: 40,
+                    padding: EdgeInsets.all(8),
+                    child: SvgPicture.asset(
+                      'assets/images/arrow_player_enter.svg',
+                      colorFilter: ColorFilter.mode(
+                        Colors.white,
+                        BlendMode.srcIn
+                      ),
+                    ),
+                  )
+              : isPlayerExit
+                ? Container(
+                    width: 40,
+                    height: 40,
+                    padding: EdgeInsets.all(8),
+                    child: SvgPicture.asset(
+                      'assets/images/arrow_player_left.svg',
+                      colorFilter: ColorFilter.mode(
+                        Colors.white,
+                        BlendMode.srcIn
+                      ),
+                    ),
+                  )
+                : CircleAvatar(
+                    backgroundColor: isDark 
+                        ? AppThemes.darkSecondaryBlue.withOpacity(0.7)
+                        : AppThemes.lightSecondaryBlue.withOpacity(0.7),
+                    child: Icon(
+                      _getEventIcon(entry.details),
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
             title: Row(
               children: [
                 Container(

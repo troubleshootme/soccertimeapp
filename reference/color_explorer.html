@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Color Palette Explorer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        h1, h2 {
+            text-align: center;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .palette-section, .demo-section {
+            margin-bottom: 40px;
+        }
+        .color-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .color-box {
+            width: 100%;
+            height: 80px;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+            transition: transform 0.2s;
+        }
+        .color-box:hover {
+            transform: scale(1.05);
+        }
+        .selected-colors {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .selected-color {
+            width: 100px;
+            height: 100px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+        }
+        .demo-ui {
+            background-color: #212121; /* Default background */
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            margin-top: 20px;
+        }
+        .demo-card {
+            background-color: #2C2C2C; /* Default card background */
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .demo-text {
+            color: #FFFFFF; /* Default text color */
+            margin: 0 0 10px 0;
+        }
+        .demo-button {
+            background-color: #3F51B5; /* Default button color */
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+            transition: background-color 0.3s;
+        }
+        .demo-button:hover {
+            opacity: 0.9;
+        }
+        .demo-highlight {
+            background-color: #2ECC71; /* Default highlight color */
+            padding: 5px 10px;
+            border-radius: 5px;
+            display: inline-block;
+        }
+        .layer-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .layer-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        select {
+            padding: 5px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Color Palette Explorer</h1>
+
+        <!-- Palette Section -->
+        <div class="palette-section">
+            <h2>Select Up to 4 Colors</h2>
+            <div class="color-grid" id="colorGrid">
+                <div class="color-box" style="background-color: #212121;" data-color="#212121">Dark Background</div>
+                <div class="color-box" style="background-color: #FFFFFF; color: #333;" data-color="#FFFFFF">White Text</div>
+                <div class="color-box" style="background-color: #B0BEC5;" data-color="#B0BEC5">Light Gray</div>
+                <div class="color-box" style="background-color: #3F51B5;" data-color="#3F51B5">Muted Blue</div>
+                <div class="color-box" style="background-color: #2ECC71;" data-color="#2ECC71">Emerald Green</div>
+                <div class="color-box" style="background-color: #F1C40F;" data-color="#F1C40F">Soft Amber</div>
+                <div class="color-box" style="background-color: #8E44AD;" data-color="#8E44AD">Deep Purple</div>
+                <div class="color-box" style="background-color: #E74C3C;" data-color="#E74C3C">Coral Red</div>
+                <div class="color-box" style="background-color: #16A085;" data-color="#16A085">Teal</div>
+                <div class="color-box" style="background-color: #00BCD4;" data-color="#00BCD4">Light Cyan</div>
+            </div>
+            <div class="selected-colors" id="selectedColors">
+                <!-- Selected colors will appear here -->
+            </div>
+        </div>
+
+        <!-- Demo UI Section -->
+        <div class="demo-section">
+            <h2>Demo UI - Assign Colors to Layers</h2>
+            <div class="layer-controls">
+                <div class="layer-control">
+                    <label for="backgroundColor">Background:</label>
+                    <select id="backgroundColor" onchange="updateDemoUI()">
+                        <option value="#212121">Dark Background (#212121)</option>
+                        <option value="#FFFFFF">White Text (#FFFFFF)</option>
+                        <option value="#B0BEC5">Light Gray (#B0BEC5)</option>
+                        <option value="#3F51B5">Muted Blue (#3F51B5)</option>
+                        <option value="#2ECC71">Emerald Green (#2ECC71)</option>
+                        <option value="#F1C40F">Soft Amber (#F1C40F)</option>
+                        <option value="#8E44AD">Deep Purple (#8E44AD)</option>
+                        <option value="#E74C3C">Coral Red (#E74C3C)</option>
+                        <option value="#16A085">Teal (#16A085)</option>
+                        <option value="#00BCD4">Light Cyan (#00BCD4)</option>
+                    </select>
+                </div>
+                <div class="layer-control">
+                    <label for="cardColor">Card:</label>
+                    <select id="cardColor" onchange="updateDemoUI()">
+                        <option value="#2C2C2C">Default Card (#2C2C2C)</option>
+                        <option value="#212121">Dark Background (#212121)</option>
+                        <option value="#FFFFFF">White Text (#FFFFFF)</option>
+                        <option value="#B0BEC5">Light Gray (#B0BEC5)</option>
+                        <option value="#3F51B5">Muted Blue (#3F51B5)</option>
+                        <option value="#2ECC71">Emerald Green (#2ECC71)</option>
+                        <option value="#F1C40F">Soft Amber (#F1C40F)</option>
+                        <option value="#8E44AD">Deep Purple (#8E44AD)</option>
+                        <option value="#E74C3C">Coral Red (#E74C3C)</option>
+                        <option value="#16A085">Teal (#16A085)</option>
+                        <option value="#00BCD4">Light Cyan (#00BCD4)</option>
+                    </select>
+                </div>
+                <div class="layer-control">
+                    <label for="textColor">Text:</label>
+                    <select id="textColor" onchange="updateDemoUI()">
+                        <option value="#FFFFFF">White Text (#FFFFFF)</option>
+                        <option value="#212121">Dark Background (#212121)</option>
+                        <option value="#B0BEC5">Light Gray (#B0BEC5)</option>
+                        <option value="#3F51B5">Muted Blue (#3F51B5)</option>
+                        <option value="#2ECC71">Emerald Green (#2ECC71)</option>
+                        <option value="#F1C40F">Soft Amber (#F1C40F)</option>
+                        <option value="#8E44AD">Deep Purple (#8E44AD)</option>
+                        <option value="#E74C3C">Coral Red (#E74C3C)</option>
+                        <option value="#16A085">Teal (#16A085)</option>
+                        <option value="#00BCD4">Light Cyan (#00BCD4)</option>
+                    </select>
+                </div>
+                <div class="layer-control">
+                    <label for="buttonColor">Button:</label>
+                    <select id="buttonColor" onchange="updateDemoUI()">
+                        <option value="#3F51B5">Muted Blue (#3F51B5)</option>
+                        <option value="#212121">Dark Background (#212121)</option>
+                        <option value="#FFFFFF">White Text (#FFFFFF)</option>
+                        <option value="#B0BEC5">Light Gray (#B0BEC5)</option>
+                        <option value="#2ECC71">Emerald Green (#2ECC71)</option>
+                        <option value="#F1C40F">Soft Amber (#F1C40F)</option>
+                        <option value="#8E44AD">Deep Purple (#8E44AD)</option>
+                        <option value="#E74C3C">Coral Red (#E74C3C)</option>
+                        <option value="#16A085">Teal (#16A085)</option>
+                        <option value="#00BCD4">Light Cyan (#00BCD4)</option>
+                    </select>
+                </div>
+                <div class="layer-control">
+                    <label for="highlightColor">Highlight:</label>
+                    <select id="highlightColor" onchange="updateDemoUI()">
+                        <option value="#2ECC71">Emerald Green (#2ECC71)</option>
+                        <option value="#212121">Dark Background (#212121)</option>
+                        <option value="#FFFFFF">White Text (#FFFFFF)</option>
+                        <option value="#B0BEC5">Light Gray (#B0BEC5)</option>
+                        <option value="#3F51B5">Muted Blue (#3F51B5)</option>
+                        <option value="#F1C40F">Soft Amber (#F1C40F)</option>
+                        <option value="#8E44AD">Deep Purple (#8E44AD)</option>
+                        <option value="#E74C3C">Coral Red (#E74C3C)</option>
+                        <option value="#16A085">Teal (#16A085)</option>
+                        <option value="#00BCD4">Light Cyan (#00BCD4)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="demo-ui" id="demoUI">
+                <div class="demo-card" id="demoCard">
+                    <p class="demo-text" id="demoText">Player: John Doe</p>
+                    <p class="demo-text" id="demoTextSecondary">Time: 12:34</p>
+                    <span class="demo-highlight" id="demoHighlight">Active</span>
+                </div>
+                <button class="demo-button" id="demoButton">Start</button>
+                <button class="demo-button" id="demoButtonSecondary">Pause</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const selectedColorsDiv = document.getElementById('selectedColors');
+        const colorBoxes = document.querySelectorAll('.color-box');
+        let selectedColors = [];
+
+        // Handle color selection (up to 4 colors)
+        colorBoxes.forEach(box => {
+            box.addEventListener('click', () => {
+                const color = box.getAttribute('data-color');
+                if (selectedColors.includes(color)) {
+                    // Remove color if already selected
+                    selectedColors = selectedColors.filter(c => c !== color);
+                } else if (selectedColors.length < 4) {
+                    // Add color if less than 4 are selected
+                    selectedColors.push(color);
+                } else {
+                    // Replace the oldest color if 4 are already selected
+                    selectedColors.shift();
+                    selectedColors.push(color);
+                }
+                updateSelectedColors();
+            });
+        });
+
+        function updateSelectedColors() {
+            selectedColorsDiv.innerHTML = '';
+            selectedColors.forEach(color => {
+                const div = document.createElement('div');
+                div.className = 'selected-color';
+                div.style.backgroundColor = color;
+                div.textContent = color;
+                selectedColorsDiv.appendChild(div);
+            });
+        }
+
+        // Update demo UI based on selected colors
+        function updateDemoUI() {
+            const backgroundColor = document.getElementById('backgroundColor').value;
+            const cardColor = document.getElementById('cardColor').value;
+            const textColor = document.getElementById('textColor').value;
+            const buttonColor = document.getElementById('buttonColor').value;
+            const highlightColor = document.getElementById('highlightColor').value;
+
+            document.getElementById('demoUI').style.backgroundColor = backgroundColor;
+            document.getElementById('demoCard').style.backgroundColor = cardColor;
+            document.getElementById('demoText').style.color = textColor;
+            document.getElementById('demoTextSecondary').style.color = textColor;
+            document.getElementById('demoButton').style.backgroundColor = buttonColor;
+            document.getElementById('demoButtonSecondary').style.backgroundColor = buttonColor;
+            document.getElementById('demoHighlight').style.backgroundColor = highlightColor;
+        }
+    </script>
+</body>
+</html>

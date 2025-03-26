@@ -1,0 +1,1222 @@
+import 'package:flutter/material.dart';
+import '../models/session.dart';
+import '../models/player.dart';
+import '../models/match_log_entry.dart';
+import '../hive_database.dart';
+import '../services/translation_service.dart';
+import 'dart:convert';
+import 'dart:async';
+import 'package:provider/provider.dart';
+import 'package:hive/hive.dart';
+import 'package:vibration/vibration.dart';
+import 'dart:math' as math;
+import 'package:intl/intl.dart';
+
+class AppState with ChangeNotifier {
+  bool _isDarkTheme = true;
+  int? _currentSessionId;
+  List<Map<String, dynamic>> _players = [];
+  List<Map<String, dynamic>> _sessions = [];
+  String? _currentSessionPassword;
+  Session _session = Session();
+  bool _isReadOnlyMode = false;
+  bool _periodsTransitioning = false;
+
+  int? get currentSessionId => _currentSessionId;
+  List<Map<String, dynamic>> get players => _players;
+  List<Map<String, dynamic>> get sessions => _sessions;
+  String? get currentSessionPassword => _currentSessionPassword;
+  Session get session => _session;
+  bool get isDarkTheme => _isDarkTheme;
+  bool get isReadOnlyMode => _isReadOnlyMode;
+  bool get periodsTransitioning => _periodsTransitioning;
+
+  set session(Session newSession) {
+    _session = newSession;
+    notifyListeners();
+  }
+
+  Future<void> loadSessions() async {
+    try {
+      // Load sessions ONLY from Hive
+      final hiveSessions = await HiveSessionDatabase.instance.getAllSessions();
+      print('AppState: Loaded ${hiveSessions.length} sessions from Hive database');
+      _sessions = hiveSessions;
+      notifyListeners();
+    } catch (e) {
+      print('AppState: Error loading sessions from Hive: $e');
+      // If error occurs, provide empty sessions list
+      _sessions = [];
+      notifyListeners();
+    }
+  }
+
+  Future<void> createSession(String name) async {
+    try {
+      // Ensure name is not empty
+      final sessionName = name.trim().isEmpty ? "New Session" : name.trim();
+      print('AppState: Creating new session with name: "$sessionName"');
+      
+      // Store ONLY in Hive
+      final sessionId = await HiveSessionDatabase.instance.insertSession(sessionName);
+      
+      _currentSessionId = sessionId;
+      _currentSessionPassword = sessionName;
+      
+      // Clear players list
+      _players = [];
+      
+      // Create new session model with default settings
+      _session = Session(
+        sessionName: sessionName,
+        enableMatchDuration: false,
+        matchDuration: 90 * 60,
+        matchSegments: 2,
+        enableTargetDuration: false,
+        targetPlayDuration: 16 * 60,
+        enableSound: false,
+        enableVibration: true,
+      );
+      
+      // Log new session creation
+      logMatchEvent("New session '$sessionName' created");
+      
+      // Store session settings in Hive
+      await saveSession();
+      
+      // Reload sessions list to include the new one
+      await loadSessions();
+      
+      notifyListeners();
+    } catch (e) {
+      print('AppState: Error creating session: $e');
+      throw Exception('Could not create session: $e');
+    }
+  }
+
+  Future<void> loadSession(int sessionId) async {
+    print('AppState.loadSession called with sessionId: $sessionId');
+    
+    if (sessionId <= 0) {
+      print('Invalid session ID: $sessionId');
+      throw Exception('Invalid session ID');
+    }
+    
+    try {
+      // Ensure database is initialized
+      await HiveSessionDatabase.instance.init();
+      
+      // CRITICAL STEP: First, get the exact session name from the database
+      final sessionData = await HiveSessionDatabase.instance.getSession(sessionId);
+      if (sessionData == null) {
+        print('Session not found in database: $sessionId');
+        throw Exception('Session not found');
+      }
+      
+      final correctSessionName = sessionData['name'] ?? '';
+      print('Found session name from direct lookup: "$correctSessionName"');
+      
+      // Now set the current session ID and load players
+      _currentSessionId = sessionId;
+      _players = await HiveSessionDatabase.instance.getPlayersForSession(sessionId);
+      print('Loaded ${_players.length} players for session');
+      _players.sort((a, b) => a['name'].compareTo(b['name']));
+      
+      // CRITICAL: Set the current session password to the correct name
+      _currentSessionPassword = correctSessionName;
+      print('Set currentSessionPassword to: "$_currentSessionPassword"');
+      
+      // Create the session with the correct name
+      _session = Session(sessionName: correctSessionName);
+      print('Created new Session with sessionName: "${_session.sessionName}"');
+      
+      // Load session settings if they exist
+      try {
+        final settings = await HiveSessionDatabase.instance.getSessionSettings(sessionId);
+        print('Session settings: ${settings != null ? 'Found' : 'Not found'}');
+        if (settings != null) {
+          // Create a new session with settings but preserve the correct name
+          _session = Session(
+            sessionName: correctSessionName,  // Make sure we keep the session name
+            enableMatchDuration: settings['enableMatchDuration'] ?? false,
+            matchDuration: settings['matchDuration'] ?? (90 * 60),
+            matchSegments: settings['matchSegments'] ?? 2,
+            enableTargetDuration: settings['enableTargetDuration'] ?? false,
+            targetPlayDuration: settings['targetPlayDuration'] ?? (16 * 60),
+            enableSound: settings['enableSound'] ?? false,
+            enableVibration: settings.containsKey('enableVibration') ? settings['enableVibration'] : true,
+            matchRunning: settings['matchRunning'] ?? false,
+          );
+          print('Loaded session settings with name: "${_session.sessionName}"');
+        }
+      } catch (e) {
+        print('Error loading session settings, using defaults: $e');
+        // Continue with default settings if we can't load settings
+      }
+      
+      // Initialize players from database
+      try {
+        print('Initializing ${_players.length} players from database');
+        for (var player in _players) {
+          final playerName = player['name'] as String;
+          _session.addPlayer(playerName);
+          _session.updatePlayerTime(playerName, player['timer_seconds'] ?? 0);
+          print('Added player: $playerName');
+        }
+      } catch (e) {
+        print('Error initializing players: $e');
+        // Continue with the session even if player initialization fails
+      }
+      
+      print('Session loaded successfully, currentSessionId: $_currentSessionId');
+      print('Final session name in AppState: "${_session.sessionName}"');
+      print('Final currentSessionPassword: "$_currentSessionPassword"');
+      
+      _isReadOnlyMode = false;
+      notifyListeners();
+    } catch (e) {
+      print('Error during session load: $e');
+      _currentSessionId = null;
+      _currentSessionPassword = null;
+      _isReadOnlyMode = false;
+      throw e;  // Re-throw to allow proper error handling
+    }
+  }
+
+  Future<void> updatePlayerTimer(int playerId, int timerSeconds) async {
+    if (_currentSessionId != null) {
+      try {
+        await HiveSessionDatabase.instance.updatePlayerTimer(playerId, timerSeconds);
+        _players = await HiveSessionDatabase.instance.getPlayersForSession(_currentSessionId!);
+      
+        final playerIndex = _players.indexWhere((p) => p['id'] == playerId);
+        if (playerIndex != -1) {
+          final playerName = _players[playerIndex]['name'];
+          _session.updatePlayerTime(playerName, timerSeconds);
+        }
+      } catch (e) {
+        print('Error updating player timer in Hive: $e');
+      }
+    }
+    notifyListeners();
+  }
+
+  void toggleTheme() {
+    _isDarkTheme = !_isDarkTheme;
+    notifyListeners();
+  }
+
+  Future<void> addPlayer(String name) async {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) return;
+    
+    print('Attempting to add player: $trimmedName');
+    
+    // Check if player already exists (case insensitive)
+    final playerExists = _session.players.keys.any(
+      (key) => key.toLowerCase() == trimmedName.toLowerCase()
+    );
+    
+    // Early exit if player already exists
+    if (playerExists) {
+      print('Player already exists: $trimmedName');
+      return;
+    }
+    
+    try {
+      // Bail out if we don't have a current session
+      if (_currentSessionId == null) {
+        print('Cannot add player: No active session');
+        return;
+      }
+      
+      // Ensure database is initialized
+      await HiveSessionDatabase.instance.init();
+      
+      // Add to the session model first
+      _session.addPlayer(trimmedName);
+      print('Added player to session model: $trimmedName');
+      
+      // Store in Hive database
+      final playerId = await HiveSessionDatabase.instance.insertPlayer(
+        _currentSessionId!,
+        trimmedName,
+        0,
+      );
+      print('Added player to database with ID: $playerId');
+      
+      // Create player object for UI list
+      final newPlayer = {
+        'id': playerId,
+        'name': trimmedName,
+        'timer_seconds': 0,
+        'session_id': _currentSessionId!,
+      };
+      
+      // Safely add to the players list
+      _players = List<Map<String, dynamic>>.from(_players)..add(newPlayer);
+      
+      // Sort alphabetically
+      _players.sort((a, b) => a['name'].compareTo(b['name']));
+      
+      // Log player addition
+      logMatchEvent("$trimmedName added to roster");
+      
+      // Save session changes
+      await saveSession();
+      print('Successfully added player: $trimmedName');
+    } catch (e) {
+      print('Error adding player: $e');
+      // Remove from session model if database operation failed
+      _session.players.remove(trimmedName);
+      throw Exception('Could not add player: $e');
+    }
+    
+    // Notify listeners to update UI
+    notifyListeners();
+  }
+  
+  Future<void> toggleMatchDuration(bool value) async {
+    _session.enableMatchDuration = value;
+    await saveSession();
+    notifyListeners();
+  }
+  
+  Future<void> updateMatchDuration(int minutes) async {
+    _session.matchDuration = minutes * 60;
+    await saveSession();
+    notifyListeners();
+  }
+  
+  Future<void> updateMatchSegments(int segments) async {
+    _session.matchSegments = segments;
+    await saveSession();
+    notifyListeners();
+  }
+  
+  Future<void> toggleTargetDuration(bool value) async {
+    _session.enableTargetDuration = value;
+    await saveSession();
+    notifyListeners();
+  }
+  
+  Future<void> updateTargetDuration(int minutes) async {
+    _session.targetPlayDuration = minutes * 60;
+    await saveSession();
+    notifyListeners();
+  }
+  
+  Future<void> toggleSound(bool value) async {
+    _session.enableSound = value;
+    await saveSession();
+    notifyListeners();
+  }
+  
+  Future<void> toggleVibration() async {
+    final hasVibrator = await Vibration.hasVibrator() ?? false;
+    if (hasVibrator) {
+      _session = _session.copyWith(enableVibration: !_session.enableVibration);
+      notifyListeners();
+      await HiveSessionDatabase.instance.updateSettings(_session);
+    }
+  }
+  
+  // Toggle player active state with proper logging
+  Future<void> togglePlayer(String name) async {
+    if (_session.players.containsKey(name)) {
+      final player = _session.players[name]!;
+      final currentMatchTime = _session.matchTime;
+      
+      // Determine the true current state, considering activeBeforePause
+      final wasActive = _session.isPaused ? 
+        _session.activeBeforePause.contains(name) : 
+        player.active;
+      
+      // If player is currently active and not in setup mode, calculate their elapsed time before deactivating
+      if (wasActive && !_session.isSetup && player.lastActiveMatchTime != null) {
+        player.totalTime += currentMatchTime - player.lastActiveMatchTime!;
+        player.lastActiveMatchTime = null;
+      }
+      
+      // Toggle the player's state based on the true current state
+      final shouldBeActive = !wasActive;
+      player.active = shouldBeActive;
+      
+      // Handle paused state management
+      if (_session.isPaused) {
+        if (shouldBeActive) {
+          // Add to activeBeforePause if not already there
+          if (!_session.activeBeforePause.contains(name)) {
+            _session.activeBeforePause.add(name);
+          }
+        } else {
+          // Remove from activeBeforePause
+          _session.activeBeforePause.remove(name);
+        }
+      } else if (shouldBeActive && !_session.isSetup) {
+        // If activating during match, just record current match time as start point
+        player.lastActiveMatchTime = currentMatchTime;
+        // Don't reset totalTime - it accumulates across active periods
+        _session.matchRunning = true;
+      }
+      
+      // Log the event based on the new state (only if not in setup mode)
+      if (!_session.isSetup) {
+        if (shouldBeActive) {
+          logMatchEvent("$name ${TranslationService().get('match.entered_game')}", entryType: 'player_enter');
+        } else {
+          logMatchEvent("$name ${TranslationService().get('match.left_game')}", entryType: 'player_exit');
+        }
+      }
+      
+      await saveSession();
+      notifyListeners();
+    }
+  }
+  
+  // Helper method to calculate player time
+  int calculatePlayerTime(Player player) {
+    if (!player.active || _session.isPaused) {
+      return player.totalTime;
+    }
+    
+    // For active players, add current active duration to total time
+    if (player.lastActiveMatchTime != null) {
+      return player.totalTime + (_session.matchTime - player.lastActiveMatchTime!);
+    }
+    
+    return player.totalTime;
+  }
+  
+  Future<void> saveSession() async {
+    if (_currentSessionId == null) return;
+    
+    try {
+      // Update player times in Hive database
+      for (var playerName in _session.players.keys) {
+        final playerIndex = _players.indexWhere((p) => p['name'] == playerName);
+        final playerTime = _session.players[playerName]!.totalTime;
+        
+        if (playerIndex != -1) {
+          final playerId = _players[playerIndex]['id'] as int;
+          await HiveSessionDatabase.instance.updatePlayerTimer(playerId, playerTime);
+          
+          // Update local list
+          _players[playerIndex]['timer_seconds'] = playerTime;
+        }
+      }
+      
+      // Save session settings to Hive
+      await HiveSessionDatabase.instance.saveSessionSettings(_currentSessionId!, {
+        'enableMatchDuration': _session.enableMatchDuration,
+        'matchDuration': _session.matchDuration,
+        'matchSegments': _session.matchSegments,
+        'enableTargetDuration': _session.enableTargetDuration,
+        'targetPlayDuration': _session.targetPlayDuration,
+        'enableSound': _session.enableSound,
+        'enableVibration': _session.enableVibration,
+        'matchRunning': _session.matchRunning,
+      });
+    } catch (e) {
+      print('Error saving to Hive database: $e');
+    }
+    
+    // No need to notify listeners here as the caller should do it if needed
+  }
+
+  Future<void> setCurrentSession(int sessionId) async {
+    try {
+      _currentSessionId = sessionId;
+      
+      _players = await HiveSessionDatabase.instance.getPlayersForSession(sessionId);
+      _players.sort((a, b) => a['name'].compareTo(b['name']));
+      
+      // Get session directly from database to ensure we have the correct name
+      final sessionData = await HiveSessionDatabase.instance.getSession(sessionId);
+      if (sessionData == null) {
+        print('Session not found: $sessionId');
+        throw Exception('Session not found');
+      }
+      
+      final sessionName = sessionData['name'] ?? '';
+      print('Loaded session name: "$sessionName"');
+      _currentSessionPassword = sessionName;
+      
+      // Initialize session with correct name and default settings
+      _session = Session(
+        sessionName: sessionName,
+        enableMatchDuration: false,
+        matchDuration: 90 * 60,
+        matchSegments: 2,
+        enableTargetDuration: false,
+        targetPlayDuration: 16 * 60,
+        enableSound: false,
+        enableVibration: true, // Enable vibration by default
+      );
+      
+      // Load session settings from Hive
+      final settings = await HiveSessionDatabase.instance.getSessionSettings(sessionId);
+      if (settings != null) {
+        _session = Session(
+          sessionName: sessionName, // Make sure we preserve the correct name
+          enableMatchDuration: settings['enableMatchDuration'] ?? false,
+          matchDuration: settings['matchDuration'] ?? (90 * 60),
+          matchSegments: settings['matchSegments'] ?? 2,
+          enableTargetDuration: settings['enableTargetDuration'] ?? false,
+          targetPlayDuration: settings['targetPlayDuration'] ?? (16 * 60),
+          enableSound: settings['enableSound'] ?? false,
+          enableVibration: settings.containsKey('enableVibration') ? settings['enableVibration'] : true, // Respect existing setting
+        );
+      }
+      
+      // Initialize players
+      for (var player in _players) {
+        final name = player['name'];
+        // Always set player times to zero when loading a session to ensure consistency
+        _session.players[name] = Player(name: name, totalTime: 0);
+      }
+      
+      // Match time is also reset to zero for consistency
+      _session.matchTime = 0;
+      
+      // Log session loading
+      logMatchEvent("Session '$sessionName' loaded with all times reset to zero");
+      
+      print('Session loaded with name: "${_session.sessionName}", ID: $sessionId');
+      notifyListeners();
+    } catch (e) {
+      print('AppState: Error loading session: $e');
+      throw Exception('Could not load session: $e');
+    }
+  }
+
+  Future<void> resetAllPlayers() async {
+    // Reset player states in the session model
+    _session.resetAllPlayers();
+    
+    // If in read-only mode, just update the UI without trying to persist changes
+    if (_isReadOnlyMode) {
+      print('In read-only mode, resetting all players without persisting to database');
+      notifyListeners();
+      return;
+    }
+    
+    // If we're not in read-only mode, try to update the database
+    try {
+      // Update all player timers in Hive database
+      if (_currentSessionId != null) {
+        for (final entry in _session.players.entries) {
+          // Find player ID from the players list
+          final playerIndex = _players.indexWhere((p) => p['name'] == entry.key);
+          if (playerIndex != -1) {
+            final playerId = _players[playerIndex]['id'] as int;
+            await HiveSessionDatabase.instance.updatePlayerTimer(playerId, entry.value.totalTime);
+            
+            // Update local list
+            _players[playerIndex]['timer_seconds'] = 0;
+          }
+        }
+      }
+    } catch (e) {
+      print('Error resetting players in Hive: $e');
+    }
+    
+    notifyListeners();
+  }
+
+  Future<void> resetSession() async {
+    // Reset all session state
+    _session.resetSessionState();
+    
+    // Ensure period-related flags are properly reset
+    _session.currentPeriod = 1;
+    _session.hasWhistlePlayed = false;
+    _session.isMatchComplete = false;
+    _session.matchRunning = false;
+    _session.isPaused = false;
+    _periodsTransitioning = false;
+    
+    // Log the reset event
+    logMatchEvent("All times and log reset");
+    
+    // Save the reset state
+    await saveSession();
+    
+    // Notify listeners of the reset
+    notifyListeners();
+  }
+
+  // Prepare for the next period
+  Future<void> startNextPeriod() async {
+    if (!_periodsTransitioning) return; // Only proceed if we were in transition
+    
+    // Reset the period transition flag first
+    _periodsTransitioning = false;
+    
+    // Reset whistle played flag
+    _session.hasWhistlePlayed = false;
+    
+    // Log the start of the new period
+    final periodName = _session.matchSegments == 2 ? 'Half' : 'Quarter';
+    final ordinal = getOrdinal(_session.currentPeriod);
+    logMatchEvent(
+      'Start of $ordinal $periodName',
+      entryType: 'period_transition'
+    );
+    
+    // Resume the match - order is important here
+    _session.isPaused = false;
+    _session.matchRunning = true;
+    
+    // Reactivate players that were active before period end
+    final currentMatchTime = _session.matchTime;
+    for (var playerName in _session.activeBeforePause) {
+      if (_session.players.containsKey(playerName)) {
+        final player = _session.players[playerName]!;
+        player.active = true;
+        player.lastActiveMatchTime = currentMatchTime;
+      }
+    }
+    
+    // Clear the active before pause list since we've reactivated them
+    _session.activeBeforePause.clear();
+    
+    await saveSession();
+    notifyListeners();
+  }
+  
+  // Helper for ordinal suffixes (st, nd, rd, th)
+  String getOrdinalSuffix(int number) {
+    if (number % 10 == 1 && number % 100 != 11) return "st";
+    if (number % 10 == 2 && number % 100 != 12) return "nd";
+    if (number % 10 == 3 && number % 100 != 13) return "rd";
+    return "th";
+  }
+  
+  void pauseAll() {
+    // This is a proxy to the pauseAll function in MainScreen
+    // In this implementation, we just update the session state
+    _session.isPaused = !_session.isPaused;
+    
+    if (_session.isPaused) {
+      // Store active players and deactivate them
+      _session.activeBeforePause = [];
+      final currentMatchTime = _session.matchTime;
+      
+      for (var playerName in _session.players.keys) {
+        final player = _session.players[playerName]!;
+        if (player.active) {
+          // Calculate elapsed time for active players
+          if (player.lastActiveMatchTime != null) {
+            player.totalTime += currentMatchTime - player.lastActiveMatchTime!;
+          }
+          // Reset last active time and deactivate
+          player.lastActiveMatchTime = null;
+          player.active = false;
+          // Only add to activeBeforePause if successfully deactivated
+          if (!player.active) {
+            _session.activeBeforePause.add(playerName);
+          }
+        }
+      }
+    } else {
+      // Reactivate players that were active before pause
+      final currentMatchTime = _session.matchTime;
+      final playersToReactivate = List<String>.from(_session.activeBeforePause);
+      _session.activeBeforePause = [];  // Clear list first
+      
+      for (var playerName in playersToReactivate) {
+        if (_session.players.containsKey(playerName)) {
+          final player = _session.players[playerName]!;
+          player.active = true;
+          player.lastActiveMatchTime = currentMatchTime;
+          // Only add back to activeBeforePause if activation failed
+          if (!player.active) {
+            _session.activeBeforePause.add(playerName);
+          }
+        }
+      }
+    }
+    
+    saveSession();
+    notifyListeners();
+  }
+
+  // Store active players and handle state changes for period transitions
+  void storeActivePlayersForPeriodChange() {
+    _session.activeBeforePause.clear();
+    final currentMatchTime = _session.matchTime;
+    
+    for (var playerName in _session.players.keys) {
+      final player = _session.players[playerName]!;
+      if (player.active) {
+        _session.activeBeforePause.add(playerName);
+        if (player.lastActiveMatchTime != null) {
+          player.totalTime += currentMatchTime - player.lastActiveMatchTime!;
+        }
+        player.lastActiveMatchTime = null;
+        player.active = false;
+      }
+    }
+  }
+
+  // Rename a player
+  Future<void> renamePlayer(String oldName, String newName) async {
+    if (_currentSessionId == null) return;
+    
+    final trimmedNewName = newName.trim();
+    if (!_session.players.containsKey(oldName) || trimmedNewName.isEmpty) return;
+    
+    // Don't rename if new name already exists
+    if (_session.players.containsKey(trimmedNewName)) return;
+    
+    // Get the player data
+    final player = _session.players[oldName]!;
+    
+    // Create a new player with the new name but same data
+    _session.players[trimmedNewName] = Player(
+      name: trimmedNewName,
+      totalTime: player.totalTime,
+      active: player.active,
+      lastActiveMatchTime: player.lastActiveMatchTime,
+    );
+    
+    // Remove the old player
+    _session.players.remove(oldName);
+    
+    // Update the database
+    if (_currentSessionId != null) {
+      final playerIndex = _players.indexWhere((p) => p['name'] == oldName);
+      if (playerIndex != -1) {
+        // Use the player's ID to update the name
+        final playerId = _players[playerIndex]['id'] as int;
+        // We should have a renamePlayer method in database, but for now
+        // just update the local list
+        _players[playerIndex]['name'] = trimmedNewName;
+      }
+    }
+    
+    notifyListeners();
+  }
+
+  // Add missing resetPlayerTime method
+  Future<void> resetPlayerTime(String playerName) async {
+    if (_session.players.containsKey(playerName)) {
+      final player = _session.players[playerName]!;
+      player.totalTime = 0;
+      player.active = false;
+      player.lastActiveMatchTime = null;
+      await saveSession();
+      notifyListeners();
+    }
+  }
+  
+  Future<void> removePlayer(String name) async {
+    if (_session.players.containsKey(name)) {
+      // Remove from session
+      _session.players.remove(name);
+      
+      // Log player removal
+      logMatchEvent("$name removed from roster");
+      
+      // Remove from DB if needed
+      if (_currentSessionId != null) {
+        final playerIndex = _players.indexWhere((p) => p['name'] == name);
+        if (playerIndex != -1) {
+          final playerId = _players[playerIndex]['id'];
+          
+          // Delete from Hive database
+          try {
+            await HiveSessionDatabase.instance.deletePlayer(playerId);
+            print('Deleted player $name (ID: $playerId) from database');
+          } catch (e) {
+            print('Error deleting player from database: $e');
+          }
+          
+          // Also remove from our local list
+          _players.removeAt(playerIndex);
+        }
+      } else {
+        _players.removeWhere((p) => p['name'] == name);
+      }
+      
+      // Save the session to make changes persistent
+      saveSession();
+      
+      notifyListeners();
+    }
+  }
+
+  void clearCurrentSession() {
+    _currentSessionId = null;
+    _currentSessionPassword = null;
+    _players = [];
+    _session = Session(); // Reset to a new blank session
+    notifyListeners();
+  }
+
+  Future<void> togglePlayerActive(String name) async {
+    // Get the current active state before toggling
+    final wasActive = _session.players[name]?.active ?? false;
+    
+    // Toggle the player's active state in the session model
+    _session.togglePlayerActive(name);
+    
+    // Get the new active state
+    final isActive = _session.players[name]?.active ?? false;
+    
+    // Log player entry/exit
+    if (isActive && !wasActive) {
+      final enteredGame = TranslationService().get('match.entered_game');
+      logMatchEvent("$name $enteredGame");
+    } else if (!isActive && wasActive) {
+      final leftGame = TranslationService().get('match.left_game');
+      logMatchEvent("$name $leftGame");
+    }
+    
+    // If in read-only mode, just update the UI without trying to persist changes
+    if (_isReadOnlyMode) {
+      print('In read-only mode, toggling player $name without persisting to database');
+      notifyListeners();
+      return;
+    }
+    
+    // If we're not in read-only mode, try to update the database
+    try {
+      // Update player timer in Hive database
+      if (_currentSessionId != null) {
+        final player = _session.players[name];
+        if (player != null) {
+          // Find player ID from the players list
+          final playerIndex = _players.indexWhere((p) => p['name'] == name);
+          if (playerIndex != -1) {
+            final playerId = _players[playerIndex]['id'] as int;
+            await HiveSessionDatabase.instance.updatePlayerTimer(playerId, player.totalTime);
+          }
+        }
+      }
+    } catch (e) {
+      print('Error updating player active state in Hive: $e');
+    }
+    
+    notifyListeners();
+  }
+
+  // Reset the session state with proper logging
+  Future<void> resetSessionState() async {
+    // Reset all match state flags
+    _session.matchTime = 0;
+    _session.currentPeriod = 1;
+    _session.hasWhistlePlayed = false;
+    _session.matchRunning = false;
+    _session.isPaused = false;
+    _session.isMatchComplete = false;
+    _session.isSetup = true;  // Reset to setup mode
+    _session.activeBeforePause = [];
+    
+    // Clear the match log
+    _session.clearMatchLog();
+    
+    // Reset all player states but keep them active/inactive as they were
+    final activeStates = Map<String, bool>.fromEntries(
+      _session.players.entries.map((e) => MapEntry(e.key, e.value.active))
+    );
+    
+    for (var playerName in _session.players.keys) {
+      final player = _session.players[playerName]!;
+      player.totalTime = 0;
+      player.lastActiveMatchTime = null;
+      // Preserve active state in setup mode
+      player.active = activeStates[playerName] ?? false;
+    }
+    
+    // If in read-only mode, just update the UI without trying to persist changes
+    if (_isReadOnlyMode) {
+      print('In read-only mode, resetting session state without persisting to database');
+      notifyListeners();
+      return;
+    }
+    
+    // Save the reset state
+    try {
+      await saveSession();
+    } catch (e) {
+      print('Error resetting session in Hive: $e');
+    }
+    
+    notifyListeners();
+  }
+
+  // Start a new match
+  Future<void> startMatch() async {
+    if (_session.isSetup) {
+      // Transitioning from setup to active
+      _session.isSetup = false;
+      _session.matchRunning = true;
+      _session.isPaused = false;
+      
+      // Log match start as the first entry
+      _session.addMatchLogEntry('Match Started', entryType: 'match_start');
+      
+      // Set initial active times for any players that were toggled during setup
+      final currentMatchTime = _session.matchTime;
+      for (var playerName in _session.players.keys) {
+        final player = _session.players[playerName]!;
+        if (player.active) {
+          player.lastActiveMatchTime = currentMatchTime;
+        }
+      }
+      
+      await saveSession();
+      notifyListeners();
+    } else if (!_session.matchRunning) {
+      // Normal match start (after pause)
+      _session.matchRunning = true;
+      _session.isPaused = false;
+      
+      await saveSession();
+      notifyListeners();
+    }
+  }
+
+  Future<void> deleteSession(int sessionId) async {
+    try {
+      // Delete from Hive
+      await HiveSessionDatabase.instance.deleteSession(sessionId);
+      
+      // Reload the sessions list
+      await loadSessions();
+      
+      // If the current session was deleted, clear it
+      if (_currentSessionId == sessionId) {
+        _currentSessionId = null;
+        _currentSessionPassword = null;
+        _session = Session();
+        _players = [];
+        notifyListeners();
+      }
+    } catch (e) {
+      print('Error deleting session from Hive: $e');
+      throw Exception('Could not delete session: $e');
+    }
+  }
+
+  // Add an entry to the match log
+  void logMatchEvent(String details, {String entryType = 'standard', int? timestamp}) {
+    // Process the details to ensure all translation keys are resolved
+    String processedDetails = details;
+    
+    // Check if the details contain any unresolved translation keys
+    if (details.contains('match.')) {
+      // If it's a direct translation key, resolve it
+      if (details.startsWith('match.')) {
+        processedDetails = TranslationService().get(details);
+      } else {
+        // For text containing translation keys like "2 entered the match.match"
+        // Replace each occurrence of a translation key with its translated value
+        final regex = RegExp(r'match\.[a-z_]+');
+        processedDetails = details.replaceAllMapped(regex, (match) {
+          return TranslationService().get(match.group(0)!);
+        });
+      }
+    }
+    
+    // Add the timestamp to goal entries
+    if (timestamp != null) {
+      final timeStr = _formatTime(timestamp);
+      processedDetails = '$processedDetails at $timeStr';
+    }
+    
+    // Now add the processed details to the log with the custom timestamp if provided
+    _session.addMatchLogEntry(
+      processedDetails,
+      entryType: entryType,
+      customMatchTime: timestamp,
+    );
+    
+    // Debug logging
+    print("Adding match log entry: $processedDetails (type: $entryType)");
+    
+    // No need to save to database here - will be saved with other session changes
+    notifyListeners();
+  }
+
+  // Export match log to a string for sharing
+  String exportMatchLogToText() {
+    final buffer = StringBuffer();
+    final dateFormat = DateFormat('MM/dd/yyyy h:mm a'); // US format with AM/PM
+    
+    // Add session name as header
+    buffer.writeln('MATCH LOG: ${_session.sessionName}');
+    buffer.writeln(dateFormat.format(DateTime.now())); // US formatted date/time
+    buffer.writeln('----------------------------------------');
+    
+    // Add current score
+    buffer.writeln('SCORE: ${_session.teamGoals} - ${_session.opponentGoals}');
+    buffer.writeln('----------------------------------------');
+    buffer.writeln();
+    
+    // Add log entries in chronological order (oldest first)
+    final entries = _session.getSortedMatchLogAscending();
+    
+    for (var entry in entries) {
+      // Format: [Time] Event details
+      if (entry.entryType?.toLowerCase() == 'period_transition') {
+        // Simple emphasis for period transitions
+        buffer.writeln('[${entry.matchTime}] * ${entry.details} *');
+      } else {
+        buffer.writeln('[${entry.matchTime}] ${entry.details}');
+      }
+    }
+    
+    return buffer.toString();
+  }
+
+  // Modified version of existing methods that add logging
+  
+  // Log match pause/resume
+  Future<void> toggleMatchRunning() async {
+    if (_session.matchRunning) {
+      // If running, pause the match
+      await pauseMatch();
+    } else {
+      // If paused, resume or start the match
+      _session.matchRunning = true;
+      _session.isPaused = false;
+      
+      // Reactivate players that were active before pause
+      final currentMatchTime = _session.matchTime;
+      for (var playerName in _session.activeBeforePause) {
+        if (_session.players.containsKey(playerName)) {
+          final player = _session.players[playerName]!;
+          player.active = true;
+          player.lastActiveMatchTime = currentMatchTime;
+        }
+      }
+      
+      // Clear the active before pause list
+      _session.activeBeforePause = [];
+
+      // Check if this is the first start (match time is 0)
+      if (_session.matchTime == 0) {
+        logMatchEvent(TranslationService().get('match.match_started'), entryType: 'match_start');
+      } else {
+        logMatchEvent(TranslationService().get('match.match_resumed'));
+      }
+      
+      await saveSession();
+      notifyListeners();
+    }
+  }
+  
+  // Helper for ordinal numbers (1st, 2nd, 3rd, etc.)
+  String getOrdinal(int number) {
+    if (number == 1) return '1st';
+    if (number == 2) return '2nd';
+    if (number == 3) return '3rd';
+    return '${number}th';
+  }
+  
+  // Update match time and check for period changes
+  void updateMatchTime(int newMatchTime) {
+    if (_session.matchTime != newMatchTime) {
+      final timeDiff = newMatchTime - _session.matchTime;
+      _session.matchTime = newMatchTime;
+      
+      // Update active player times
+      if (timeDiff > 0 && !_session.isPaused) {
+        for (var playerName in _session.players.keys) {
+          final player = _session.players[playerName]!;
+          if (player.active && player.lastActiveMatchTime != null) {
+            // Calculate exact time since last update for this player
+            final timeToAdd = newMatchTime - player.lastActiveMatchTime!;
+            if (timeToAdd > 0) {
+              player.totalTime += timeToAdd;
+              player.lastActiveMatchTime = newMatchTime;
+            }
+          }
+        }
+      }
+      
+      notifyListeners();
+    }
+  }
+
+  // Pause when all players are inactive
+  Future<void> checkForAutoPause() async {
+    // No longer auto-pause when all players are inactive
+    // Match will continue running until explicitly paused or reset
+    return;
+  }
+
+  void verifyActiveSwitch(String name) {
+    if (_session.players.containsKey(name)) {
+      final player = _session.players[name]!;
+      if (player.active) {
+        // Log the player entering - use the fully translated string
+        final enteredGame = TranslationService().get('match.entered_game');
+        logMatchEvent("$name $enteredGame");
+      } else {
+        // Log the player leaving - use the fully translated string
+        final leftGame = TranslationService().get('match.left_game');
+        logMatchEvent("$name $leftGame");
+      }
+    }
+  }
+
+  Future<void> pauseMatch() async {
+    print('pauseMatch called');
+    if (!_session.matchRunning) {
+      print('Match is already paused');
+      return;
+    }
+
+    _session.matchRunning = false;
+    _session.isPaused = true;
+
+    // Store currently active players for resuming later
+    _session.activeBeforePause = [];
+    
+    // Calculate final times for all players
+    final currentMatchTime = _session.matchTime;
+    
+    for (var playerName in _session.players.keys) {
+      final player = _session.players[playerName]!;
+      
+      if (player.active) {
+        // Store active players for resuming later
+        _session.activeBeforePause.add(playerName);
+        
+        // Calculate elapsed time since last activation
+        if (player.lastActiveMatchTime != null) {
+          player.totalTime += (currentMatchTime - player.lastActiveMatchTime!);
+        }
+        
+        // Reset last active time and deactivate
+        player.lastActiveMatchTime = null;
+        player.active = false;
+      }
+    }
+
+    logMatchEvent(TranslationService().get('match.match_paused'));
+    await saveSession();
+    notifyListeners();
+  }
+
+  // Add missing methods for BackgroundService
+  void updateMatchTimer() {
+    if (_session.matchRunning && !_session.isPaused) {
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      if (_session.lastUpdateTime != null) {
+        final elapsed = now - _session.lastUpdateTime!;
+        _session.matchTime += elapsed;
+      }
+      _session.lastUpdateTime = now;
+      notifyListeners();
+    }
+  }
+
+  bool shouldEndPeriod() {
+    if (!_session.enableMatchDuration) return false;
+    final periodDuration = _session.matchDuration ~/ _session.matchSegments;
+    final currentPeriodEndTime = _session.currentPeriod * periodDuration;
+    return _session.matchTime >= currentPeriodEndTime && !_session.hasWhistlePlayed;
+  }
+
+  bool shouldEndMatch() {
+    if (!_session.enableMatchDuration) return false;
+    return _session.matchTime >= _session.matchDuration && !_session.isMatchComplete;
+  }
+
+  void endPeriod() {
+    if (_periodsTransitioning) return; // Prevent multiple calls
+    
+    // Set the transition flag first
+    _periodsTransitioning = true;
+    
+    // Stop the match
+    _session.matchRunning = false;
+    _session.isPaused = true;
+    
+    // Store currently active players before ending period
+    _session.activeBeforePause = List<String>.from(
+      _session.players.entries
+        .where((entry) => entry.value.active)
+        .map((entry) => entry.key)
+        .toList()
+    );
+    
+    // Ensure all players are properly deactivated at period end
+    for (var playerName in _session.players.keys) {
+      final player = _session.players[playerName]!;
+      if (player.active) {
+        // Calculate final time for active players
+        if (player.lastActiveMatchTime != null) {
+          player.totalTime += (_session.matchTime - player.lastActiveMatchTime!);
+        }
+        player.lastActiveMatchTime = null;
+        player.active = false;
+      }
+    }
+
+    // Log the end of current period
+    final periodName = _session.matchSegments == 2 ? 'Half' : 'Quarter';
+    final ordinal = getOrdinal(_session.currentPeriod);
+    logMatchEvent(
+      '$ordinal $periodName Ended',
+      entryType: 'period_end'
+    );
+
+    // Increment period counter
+    _session.currentPeriod++;
+    _session.hasWhistlePlayed = false;
+
+    notifyListeners();
+  }
+
+  void endMatch() {
+    _session.isMatchComplete = true;
+    storeActivePlayersForPeriodChange();
+    logMatchEvent(TranslationService().get('match.match_complete'), entryType: 'match_end');
+    notifyListeners();
+  }
+
+  // Add goal for a player
+  Future<void> addGoal(String playerName, {int? timestamp}) async {
+    if (_session.players.containsKey(playerName)) {
+      _session.players[playerName]!.goals++;
+      _session.teamGoals++;
+      
+      // Log the goal with timestamp if provided
+      final timeStr = _formatTime(timestamp ?? _session.matchTime);
+      logMatchEvent('Goal scored by $playerName', timestamp: timestamp);
+      
+      notifyListeners();
+      await saveSession();
+    }
+  }
+
+  // Add goal for opponent team
+  Future<void> addOpponentGoal({int? timestamp}) async {
+    _session.opponentGoals++;
+    
+    // Log the goal with timestamp if provided
+    final timeStr = _formatTime(timestamp ?? _session.matchTime);
+    logMatchEvent('Opponent goal', timestamp: timestamp);
+    
+    notifyListeners();
+    await saveSession();
+  }
+
+  // Helper method to format time
+  String _formatTime(int seconds) {
+    int minutes = seconds ~/ 60;
+    int remainingSeconds = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+  }
+
+  // Get current score as a formatted string
+  String getScoreDisplay() {
+    return "${_session.sessionName}: ${_session.teamGoals} - Opp: ${_session.opponentGoals}";
+  }
+}

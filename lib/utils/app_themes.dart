@@ -16,14 +16,14 @@ class AppThemes {
   static const Color darkExitButton = Color(0xFFE91E63);
   
   // Light theme colors (inverting most of the dark theme colors)
-  static const Color lightBackground = Color(0xFFF5F5F5); // Off-white background
-  static const Color lightPrimaryBlue = Color(0xFF2C4A89); // Darker blue for better contrast
+  static const Color lightBackground = Color.fromRGBO(209, 225, 240, 1); // Off-white background
+  static const Color lightPrimaryBlue = Color.fromARGB(255, 180, 199, 240); // Darker blue for better contrast
   static const Color lightSecondaryBlue = Color(0xFF1D366A); // Even darker blue for secondary elements
   static const Color lightGreen = Color(0xFF2E7D32); // Darker green for better contrast
   static const Color lightRed = Color(0xFFC62828); // Darker red for better contrast
   static const Color lightButtonText = Colors.white;
   static const Color lightText = Colors.black87;
-  static const Color lightCardBackground = Color(0xFFEAEAEA); // Light gray card background
+  static const Color lightCardBackground = Color.fromRGBO(209, 225, 240, 1); // Off-white background
   static const Color lightPauseButton = Color(0xFF303F9F); // Darker indigo for better contrast
   static const Color lightSettingsButton = Color(0xFF5E35B1); // Darker purple for better contrast
   static const Color lightResetButton = Color(0xFFE64A19); // Darker orange for better contrast
@@ -37,7 +37,7 @@ class AppThemes {
       colorScheme: ColorScheme.dark(
         primary: darkPrimaryBlue,
         secondary: darkSecondaryBlue,
-        background: darkBackground,
+        surface: darkBackground,
         error: darkRed,
       ),
       appBarTheme: AppBarTheme(
@@ -84,7 +84,7 @@ class AppThemes {
       colorScheme: ColorScheme.light(
         primary: lightPrimaryBlue,
         secondary: lightSecondaryBlue,
-        background: lightBackground,
+        surface: lightBackground,
         error: lightRed,
       ),
       appBarTheme: AppBarTheme(

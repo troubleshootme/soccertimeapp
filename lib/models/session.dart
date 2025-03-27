@@ -35,6 +35,8 @@ class Session {
   
   int? lastUpdateTime;
   
+  int? lastVibrationSecond;
+  
   Session({
     this.sessionName = '',
     this.enableMatchDuration = true,
@@ -48,6 +50,7 @@ class Session {
     this.teamGoals = 0,
     this.opponentGoals = 0,
     this.isSetup = true,  // Initialize in setup mode
+    this.lastVibrationSecond,
   }) : lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   
   // Clear the match log
@@ -104,6 +107,8 @@ class Session {
     
     // Reset current order
     currentOrder.clear();
+    
+    lastVibrationSecond = null;
   }
   
   void togglePlayerActive(String name) {
@@ -180,6 +185,7 @@ class Session {
         'teamGoals': teamGoals,
         'opponentGoals': opponentGoals,
         'isSetup': isSetup,  // Add isSetup to JSON
+        'lastVibrationSecond': lastVibrationSecond,
       };
 
   factory Session.fromJson(Map<String, dynamic> json) {
@@ -196,6 +202,7 @@ class Session {
       teamGoals: json['teamGoals'] ?? 0,
       opponentGoals: json['opponentGoals'] ?? 0,
       isSetup: json['isSetup'] ?? true,  // Load isSetup from JSON
+      lastVibrationSecond: json['lastVibrationSecond'],
     );
     
     // Load match log if available
@@ -240,6 +247,7 @@ class Session {
     bool? isSetup,  // Add isSetup to copyWith
     int? teamGoals,
     int? opponentGoals,
+    int? lastVibrationSecond,
   }) {
     final newSession = Session(
       sessionName: sessionName ?? this.sessionName,
@@ -254,6 +262,7 @@ class Session {
       teamGoals: teamGoals ?? this.teamGoals,
       opponentGoals: opponentGoals ?? this.opponentGoals,
       isSetup: isSetup ?? this.isSetup,  // Copy isSetup
+      lastVibrationSecond: lastVibrationSecond ?? this.lastVibrationSecond,
     );
     
     // Copy over other state

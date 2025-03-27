@@ -29,7 +29,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _originalMatchSegments = "Halves";
   String _originalMatchDuration = "90";
   String _originalTargetDuration = "16";
-  bool _originalIsDarkTheme = true;
   bool _hasUnsavedChanges = false;
 
   @override
@@ -56,7 +55,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _originalMatchSegments = _matchSegments;
     _originalMatchDuration = _matchDurationController.text;
     _originalTargetDuration = _targetDurationController.text;
-    _originalIsDarkTheme = appState.isDarkTheme;
     
     // Add listeners to detect changes
     _matchDurationController.addListener(_checkForChanges);
@@ -140,8 +138,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final isDark = Provider.of<AppState>(context).isDarkTheme;
     
-    return WillPopScope(
-      onWillPop: _onWillPop,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (!didPop) {
+          final result = await _onWillPop();
+          if (result) {
+            Navigator.of(context).pop();
+          }
+        }
+      },
       child: Scaffold(
         backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
         appBar: AppBar(
@@ -168,7 +174,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Switch(
                     value: _enableMatchDuration,
                     activeColor: Colors.deepPurple,
-                    activeTrackColor: Colors.deepPurple.withOpacity(0.5),
+                    activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
                     onChanged: (value) {
                       setState(() {
                         _enableMatchDuration = value;
@@ -264,7 +270,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Switch(
                     value: _enableTargetDuration,
                     activeColor: Colors.deepPurple,
-                    activeTrackColor: Colors.deepPurple.withOpacity(0.5),
+                    activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
                     onChanged: (value) {
                       setState(() {
                         _enableTargetDuration = value;
@@ -304,7 +310,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Switch(
                     value: Provider.of<AppState>(context).isDarkTheme,
                     activeColor: Colors.deepPurple,
-                    activeTrackColor: Colors.deepPurple.withOpacity(0.5),
+                    activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
                     onChanged: (value) {
                       setState(() {
                         // If current theme doesn't match desired value, toggle it
@@ -326,7 +332,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Switch(
                     value: _enableSound,
                     activeColor: Colors.deepPurple,
-                    activeTrackColor: Colors.deepPurple.withOpacity(0.5),
+                    activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
                     onChanged: (bool value) {
                       setState(() {
                         _enableSound = value;
@@ -344,7 +350,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Switch(
                     value: _enableVibration,
                     activeColor: Colors.deepPurple,
-                    activeTrackColor: Colors.deepPurple.withOpacity(0.5),
+                    activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
                     onChanged: (bool value) {
                       setState(() {
                         _enableVibration = value;
@@ -528,7 +534,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _originalMatchSegments = _matchSegments;
                       _originalMatchDuration = _matchDurationController.text;
                       _originalTargetDuration = _targetDurationController.text;
-                      _originalIsDarkTheme = appState.isDarkTheme;
                       
                       // Reset the unsaved changes flag
                       setState(() {
@@ -595,8 +600,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
   
   Widget _buildActionButton(String text, VoidCallback onPressed, Color color) {
-    final isDark = Provider.of<AppState>(context).isDarkTheme;
-    
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton(

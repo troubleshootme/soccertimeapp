@@ -1,16 +1,12 @@
 import 'package:flutter/material.dart';
-import '../models/session.dart';
+import '../models/session.dart' as models;
 import '../models/player.dart';
-import '../models/match_log_entry.dart';
 import '../hive_database.dart';
 import '../services/translation_service.dart';
-import 'dart:convert';
 import 'dart:async';
-import 'package:provider/provider.dart';
-import 'package:hive/hive.dart';
 import 'package:vibration/vibration.dart';
-import 'dart:math' as math;
 import 'package:intl/intl.dart';
+import 'package:flutter/services.dart';
 
 class AppState with ChangeNotifier {
   bool _isDarkTheme = true;
@@ -18,7 +14,7 @@ class AppState with ChangeNotifier {
   List<Map<String, dynamic>> _players = [];
   List<Map<String, dynamic>> _sessions = [];
   String? _currentSessionPassword;
-  Session _session = Session();
+  models.Session _session = models.Session();
   bool _isReadOnlyMode = false;
   bool _periodsTransitioning = false;
 
@@ -26,12 +22,12 @@ class AppState with ChangeNotifier {
   List<Map<String, dynamic>> get players => _players;
   List<Map<String, dynamic>> get sessions => _sessions;
   String? get currentSessionPassword => _currentSessionPassword;
-  Session get session => _session;
+  models.Session get session => _session;
   bool get isDarkTheme => _isDarkTheme;
   bool get isReadOnlyMode => _isReadOnlyMode;
   bool get periodsTransitioning => _periodsTransitioning;
 
-  set session(Session newSession) {
+  set session(models.Session newSession) {
     _session = newSession;
     notifyListeners();
   }
@@ -67,7 +63,7 @@ class AppState with ChangeNotifier {
       _players = [];
       
       // Create new session model with default settings
-      _session = Session(
+      _session = models.Session(
         sessionName: sessionName,
         enableMatchDuration: false,
         matchDuration: 90 * 60,
@@ -127,7 +123,7 @@ class AppState with ChangeNotifier {
       print('Set currentSessionPassword to: "$_currentSessionPassword"');
       
       // Create the session with the correct name
-      _session = Session(sessionName: correctSessionName);
+      _session = models.Session(sessionName: correctSessionName);
       print('Created new Session with sessionName: "${_session.sessionName}"');
       
       // Load session settings if they exist
@@ -136,7 +132,7 @@ class AppState with ChangeNotifier {
         print('Session settings: ${settings != null ? 'Found' : 'Not found'}');
         if (settings != null) {
           // Create a new session with settings but preserve the correct name
-          _session = Session(
+          _session = models.Session(
             sessionName: correctSessionName,  // Make sure we keep the session name
             enableMatchDuration: settings['enableMatchDuration'] ?? false,
             matchDuration: settings['matchDuration'] ?? (90 * 60),
@@ -313,11 +309,22 @@ class AppState with ChangeNotifier {
   }
   
   Future<void> toggleVibration() async {
-    final hasVibrator = await Vibration.hasVibrator() ?? false;
+    final hasVibrator = await Vibration.hasVibrator() || false;
     if (hasVibrator) {
       _session = _session.copyWith(enableVibration: !_session.enableVibration);
       notifyListeners();
-      await HiveSessionDatabase.instance.updateSettings(_session);
+      
+      // Fix the error by passing session properties to updateSettings
+      await HiveSessionDatabase.instance.saveSessionSettings(_currentSessionId!, {
+        'enableMatchDuration': _session.enableMatchDuration,
+        'matchDuration': _session.matchDuration,
+        'matchSegments': _session.matchSegments,
+        'enableTargetDuration': _session.enableTargetDuration,
+        'targetPlayDuration': _session.targetPlayDuration,
+        'enableSound': _session.enableSound,
+        'enableVibration': _session.enableVibration,
+        'matchRunning': _session.matchRunning,
+      });
     }
   }
   
@@ -443,7 +450,7 @@ class AppState with ChangeNotifier {
       _currentSessionPassword = sessionName;
       
       // Initialize session with correct name and default settings
-      _session = Session(
+      _session = models.Session(
         sessionName: sessionName,
         enableMatchDuration: false,
         matchDuration: 90 * 60,
@@ -457,7 +464,7 @@ class AppState with ChangeNotifier {
       // Load session settings from Hive
       final settings = await HiveSessionDatabase.instance.getSessionSettings(sessionId);
       if (settings != null) {
-        _session = Session(
+        _session = models.Session(
           sessionName: sessionName, // Make sure we preserve the correct name
           enableMatchDuration: settings['enableMatchDuration'] ?? false,
           matchDuration: settings['matchDuration'] ?? (90 * 60),
@@ -543,45 +550,124 @@ class AppState with ChangeNotifier {
     notifyListeners();
   }
 
-  // Prepare for the next period
-  Future<void> startNextPeriod() async {
-    if (!_periodsTransitioning) return; // Only proceed if we were in transition
+  Future<void> endPeriod() async {
+    print("endPeriod called - current period: ${_session.currentPeriod}");
     
-    // Reset the period transition flag first
+    // Only proceed if match duration is enabled
+    if (!_session.enableMatchDuration) return;
+    
+    // Guard against multiple calls
+    if (_session.hasWhistlePlayed) {
+      print("Period end already processed (whistle played)");
+      return;
+    }
+    
+    // Mark that the whistle has played
+    _session.hasWhistlePlayed = true;
+    
+    // Calculate the end time for the current period *before* pausing
+    final periodDuration = _session.matchDuration ~/ _session.matchSegments;
+    final currentPeriodEndTime = periodDuration * _session.currentPeriod;
+
+    // Set the match time to exactly the end time of the current period for accuracy
+    _session.matchTime = currentPeriodEndTime; 
+    print("Set match time EXACTLY to period end time: ${_session.matchTime}");
+
+    // *** Force UI update for the exact time FIRST ***
+    notifyListeners(); 
+    // Short delay to allow UI thread to potentially process the time update
+    await Future.delayed(Duration(milliseconds: 50)); 
+
+    // Pause the match (if running) AFTER setting the final time
+    if (_session.matchRunning) {
+      // Pass the exact end time to pauseMatch if it needs it
+      await pauseMatch(exactEndTime: currentPeriodEndTime); 
+    }
+    
+    // We no longer log the period end event - only log period starts
+    print("Period ${_session.currentPeriod} ended at match time ${_session.matchTime}");
+    
+    // Flag that we're in a period transition (if not at match end)
+    // Do this *after* the initial time update notification
+    if (_session.currentPeriod < _session.matchSegments) {
+      _periodsTransitioning = true;
+      print("Set periodsTransitioning to true for period ${_session.currentPeriod}");
+    }
+    
+    // Save the session state AFTER all state changes are done
+    await saveSession();
+    
+    // Log state just before final notification
+    print("State before final notify in endPeriod: periodsTransitioning=$_periodsTransitioning, matchTime=${_session.matchTime}");
+    
+    // *** Final notification to trigger dialog logic (if needed) ***
+    // This ensures the UI has already received the exact time update
+    notifyListeners(); 
+  }
+
+  Future<void> startNextPeriod() async {
+    print("startNextPeriod called - from period: ${_session.currentPeriod}");
+    
+    // Turn off periods transitioning flag
     _periodsTransitioning = false;
     
-    // Reset whistle played flag
+    // Make sure we're starting from the exact period end time
+    // Calculate the exact end time of the current period
+    final periodDuration = _session.matchDuration ~/ _session.matchSegments;
+    final exactCurrentPeriodEndTime = periodDuration * _session.currentPeriod;
+    
+    // If the match time is not exactly at the period end (off by 1 second),
+    // adjust it to ensure we start the next period from the correct time point
+    if (_session.matchTime != exactCurrentPeriodEndTime) {
+      print("Adjusting match time from ${_session.matchTime} to exact period end time: $exactCurrentPeriodEndTime");
+      _session.matchTime = exactCurrentPeriodEndTime;
+    }
+    
+    // Increment to the next period
+    _session.currentPeriod++;
+    
+    // Reset the whistle played flag for the new period
     _session.hasWhistlePlayed = false;
     
     // Log the start of the new period
     final periodName = _session.matchSegments == 2 ? 'Half' : 'Quarter';
     final ordinal = getOrdinal(_session.currentPeriod);
-    logMatchEvent(
-      'Start of $ordinal $periodName',
-      entryType: 'period_transition'
-    );
+    logMatchEvent("Start of $ordinal $periodName", entryType: 'period_transition');
     
-    // Resume the match - order is important here
-    _session.isPaused = false;
+    // Ensure proper match state regardless of which period we're entering
+    // These settings should apply to ALL periods including the final one
     _session.matchRunning = true;
+    _session.isPaused = false;
     
-    // Reactivate players that were active before period end
-    final currentMatchTime = _session.matchTime;
+    // Print detailed state information
+    print("Starting period ${_session.currentPeriod}/${_session.matchSegments}");
+    print("Match state - running: ${_session.matchRunning}, paused: ${_session.isPaused}");
+    
+    // Reset the active players list
     for (var playerName in _session.activeBeforePause) {
       if (_session.players.containsKey(playerName)) {
         final player = _session.players[playerName]!;
         player.active = true;
-        player.lastActiveMatchTime = currentMatchTime;
+        player.lastActiveMatchTime = _session.matchTime;
+        print("Reactivated player: $playerName at time: ${player.lastActiveMatchTime}");
       }
     }
     
-    // Clear the active before pause list since we've reactivated them
-    _session.activeBeforePause.clear();
+    // Clear the active before pause list
+    _session.activeBeforePause = [];
     
+    // Set lastUpdateTime to prevent time jumps
+    _session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    
+    print("Started period ${_session.currentPeriod} at match time ${_session.matchTime}");
+    
+    // Save the session state
     await saveSession();
+    
+    // Force a UI update
     notifyListeners();
   }
-  
+
   // Helper for ordinal suffixes (st, nd, rd, th)
   String getOrdinalSuffix(int number) {
     if (number % 10 == 1 && number % 100 != 11) return "st";
@@ -720,12 +806,12 @@ class AppState with ChangeNotifier {
       if (_currentSessionId != null) {
         final playerIndex = _players.indexWhere((p) => p['name'] == name);
         if (playerIndex != -1) {
-          final playerId = _players[playerIndex]['id'];
+          final id = _players[playerIndex]['id'];
           
           // Delete from Hive database
           try {
-            await HiveSessionDatabase.instance.deletePlayer(playerId);
-            print('Deleted player $name (ID: $playerId) from database');
+            await HiveSessionDatabase.instance.deletePlayer(id);
+            print('Deleted player $name (ID: $id) from database');
           } catch (e) {
             print('Error deleting player from database: $e');
           }
@@ -748,7 +834,7 @@ class AppState with ChangeNotifier {
     _currentSessionId = null;
     _currentSessionPassword = null;
     _players = [];
-    _session = Session(); // Reset to a new blank session
+    _session = models.Session(); // Reset to a new blank session
     notifyListeners();
   }
 
@@ -891,7 +977,7 @@ class AppState with ChangeNotifier {
       if (_currentSessionId == sessionId) {
         _currentSessionId = null;
         _currentSessionPassword = null;
-        _session = Session();
+        _session = models.Session();
         _players = [];
         notifyListeners();
       }
@@ -1018,15 +1104,144 @@ class AppState with ChangeNotifier {
   }
   
   // Update match time and check for period changes
+  void updateMatchTimer({int? elapsedSeconds, double? elapsedMillis}) {
+    if (session.matchRunning && !session.isPaused) {
+      final oldMatchTime = session.matchTime;
+      double deltaSeconds = 0;
+
+      if (elapsedSeconds != null) {
+        deltaSeconds = elapsedSeconds.toDouble();
+      } else if (elapsedMillis != null) {
+        deltaSeconds = elapsedMillis / 1000.0;
+      } else {
+         // Default to 1 second if no specific elapsed time provided (e.g., background timer)
+         // This might need adjustment based on how background timer calls it.
+         // If background timer passes elapsed=1, this is fine.
+         deltaSeconds = 1.0;
+      }
+
+      if (deltaSeconds <= 0) return; // Don't process zero or negative delta
+
+      // Calculate new match time
+      session.matchTime += deltaSeconds.round(); // Or keep as double if more precision needed internally
+
+      // Update active players
+      for (var playerName in session.players.keys) {
+        final player = session.players[playerName]!;
+        if (player.active) {
+          player.totalTime += deltaSeconds.round(); // Update total time by rounded seconds
+          // lastActiveMatchTime might not be needed if we always calculate based on delta
+        }
+      }
+      // Note: Removed explicit setting of lastUpdateTime here,
+      // it should be set by the caller (UI timer or BG timer) AFTER this update.
+      // session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+      // Only notify if time actually changed
+      if (session.matchTime != oldMatchTime) {
+          notifyListeners();
+      }
+    }
+  }
+
+  // Pause when all players are inactive
+  Future<void> checkForAutoPause() async {
+    // No longer auto-pause when all players are inactive
+    // Match will continue running until explicitly paused or reset
+
+    // *** However, we should still update the timestamp if the timer is running ***
+    // This prevents large jumps if the app is backgrounded/resumed without state changes
+    if (session.matchRunning && !session.isPaused) {
+       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+       session.lastUpdateTime = now;
+    }
+    return;
+  }
+
+  void verifyActiveSwitch(String name) {
+    if (session.players.containsKey(name)) {
+      final player = session.players[name]!;
+      if (player.active) {
+        // Log the player entering - use the fully translated string
+        final enteredGame = TranslationService().get('match.entered_game');
+        logMatchEvent("$name $enteredGame");
+      } else {
+        // Log the player leaving - use the fully translated string
+        final leftGame = TranslationService().get('match.left_game');
+        logMatchEvent("$name $leftGame");
+      }
+    }
+  }
+
+  Future<void> pauseMatch({int? exactEndTime}) async {
+    print('pauseMatch called');
+    // Use exactEndTime if provided, otherwise use current session time
+    final timeToUse = exactEndTime ?? session.matchTime;
+
+    // Check if already paused or not running
+    if (!session.matchRunning || session.isPaused) {
+        print('Match is already paused or not running. Current state: running=${session.matchRunning}, paused=${session.isPaused}');
+        // Ensure state is consistent if called redundantly
+        session.matchRunning = false;
+        session.isPaused = true;
+        // Update timestamp even if paused redundantly
+        session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        return;
+    }
+
+    session.matchRunning = false;
+    session.isPaused = true;
+    // Update timestamp when pausing
+    session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+
+    // Store currently active players for resuming later
+    session.activeBeforePause = [];
+
+    // Calculate final times for all players using the determined time
+    final currentMatchTime = timeToUse;
+
+    for (var playerName in session.players.keys) {
+      final player = session.players[playerName]!;
+
+      if (player.active) {
+        // Store active players for resuming later
+        session.activeBeforePause.add(playerName);
+
+        // Calculate elapsed time since last activation
+        if (player.lastActiveMatchTime != null) {
+          // Ensure we don't calculate negative time if lastActiveMatchTime > currentMatchTime
+          final timeToAdd = currentMatchTime - player.lastActiveMatchTime!;
+          if (timeToAdd > 0) {
+              player.totalTime += timeToAdd;
+          } else if (timeToAdd < 0) {
+              print("Warning: Negative timeToAdd ($timeToAdd) for player $playerName during pause. TimeToUse=$timeToUse, LastActive=$player.lastActiveMatchTime");
+          }
+        }
+
+        // Reset last active time and deactivate
+        player.lastActiveMatchTime = null;
+        player.active = false;
+      }
+    }
+
+    // Don't log match paused event if we're doing a period transition
+    // Check if this is a period end pause or a regular pause
+    if (!session.hasWhistlePlayed) {
+      logMatchEvent(TranslationService().get('match.match_paused'));
+    }
+  }
+
+  // Update match time with a specific value (used by UI timer)
   void updateMatchTime(int newMatchTime) {
-    if (_session.matchTime != newMatchTime) {
-      final timeDiff = newMatchTime - _session.matchTime;
-      _session.matchTime = newMatchTime;
+    if (session.matchTime != newMatchTime) {
+      final timeDiff = newMatchTime - session.matchTime;
+      session.matchTime = newMatchTime;
       
       // Update active player times
-      if (timeDiff > 0 && !_session.isPaused) {
-        for (var playerName in _session.players.keys) {
-          final player = _session.players[playerName]!;
+      if (timeDiff > 0 && !session.isPaused) {
+        for (var playerName in session.players.keys) {
+          final player = session.players[playerName]!;
           if (player.active && player.lastActiveMatchTime != null) {
             // Calculate exact time since last update for this player
             final timeToAdd = newMatchTime - player.lastActiveMatchTime!;
@@ -1042,145 +1257,39 @@ class AppState with ChangeNotifier {
     }
   }
 
-  // Pause when all players are inactive
-  Future<void> checkForAutoPause() async {
-    // No longer auto-pause when all players are inactive
-    // Match will continue running until explicitly paused or reset
-    return;
-  }
-
-  void verifyActiveSwitch(String name) {
-    if (_session.players.containsKey(name)) {
-      final player = _session.players[name]!;
-      if (player.active) {
-        // Log the player entering - use the fully translated string
-        final enteredGame = TranslationService().get('match.entered_game');
-        logMatchEvent("$name $enteredGame");
-      } else {
-        // Log the player leaving - use the fully translated string
-        final leftGame = TranslationService().get('match.left_game');
-        logMatchEvent("$name $leftGame");
-      }
-    }
-  }
-
-  Future<void> pauseMatch() async {
-    print('pauseMatch called');
-    if (!_session.matchRunning) {
-      print('Match is already paused');
-      return;
-    }
-
-    _session.matchRunning = false;
-    _session.isPaused = true;
-
-    // Store currently active players for resuming later
-    _session.activeBeforePause = [];
-    
-    // Calculate final times for all players
-    final currentMatchTime = _session.matchTime;
-    
-    for (var playerName in _session.players.keys) {
-      final player = _session.players[playerName]!;
-      
-      if (player.active) {
-        // Store active players for resuming later
-        _session.activeBeforePause.add(playerName);
-        
-        // Calculate elapsed time since last activation
-        if (player.lastActiveMatchTime != null) {
-          player.totalTime += (currentMatchTime - player.lastActiveMatchTime!);
-        }
-        
-        // Reset last active time and deactivate
-        player.lastActiveMatchTime = null;
-        player.active = false;
-      }
-    }
-
-    logMatchEvent(TranslationService().get('match.match_paused'));
-    await saveSession();
-    notifyListeners();
-  }
-
-  // Add missing methods for BackgroundService
-  void updateMatchTimer() {
-    if (_session.matchRunning && !_session.isPaused) {
-      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      if (_session.lastUpdateTime != null) {
-        final elapsed = now - _session.lastUpdateTime!;
-        _session.matchTime += elapsed;
-      }
-      _session.lastUpdateTime = now;
-      notifyListeners();
-    }
-  }
-
   bool shouldEndPeriod() {
-    if (!_session.enableMatchDuration) return false;
-    final periodDuration = _session.matchDuration ~/ _session.matchSegments;
-    final currentPeriodEndTime = _session.currentPeriod * periodDuration;
-    return _session.matchTime >= currentPeriodEndTime && !_session.hasWhistlePlayed;
-  }
-
-  bool shouldEndMatch() {
-    if (!_session.enableMatchDuration) return false;
-    return _session.matchTime >= _session.matchDuration && !_session.isMatchComplete;
-  }
-
-  void endPeriod() {
-    if (_periodsTransitioning) return; // Prevent multiple calls
+    if (!session.enableMatchDuration) return false;
     
-    // Set the transition flag first
-    _periodsTransitioning = true;
+    // Calculate period duration
+    final periodDuration = session.matchDuration ~/ session.matchSegments;
     
-    // Stop the match
-    _session.matchRunning = false;
-    _session.isPaused = true;
+    // Calculate END time for the CURRENT period
+    final currentPeriodEndTime = periodDuration * session.currentPeriod;
     
-    // Store currently active players before ending period
-    _session.activeBeforePause = List<String>.from(
-      _session.players.entries
-        .where((entry) => entry.value.active)
-        .map((entry) => entry.key)
-        .toList()
-    );
-    
-    // Ensure all players are properly deactivated at period end
-    for (var playerName in _session.players.keys) {
-      final player = _session.players[playerName]!;
-      if (player.active) {
-        // Calculate final time for active players
-        if (player.lastActiveMatchTime != null) {
-          player.totalTime += (_session.matchTime - player.lastActiveMatchTime!);
-        }
-        player.lastActiveMatchTime = null;
-        player.active = false;
+    // Check if we're in the last 5 seconds of the period
+    final timeUntilPeriodEnd = currentPeriodEndTime - session.matchTime;
+    // Vibrate only once per second in the last 5 seconds
+    if (timeUntilPeriodEnd <= 5 && timeUntilPeriodEnd > 0 && session.matchTime > (_session.lastVibrationSecond ?? -1)) {
+      if (session.enableVibration) {
+        HapticFeedback.lightImpact(); // Use HapticFeedback
+        session.lastVibrationSecond = session.matchTime; // Record the second we vibrated
       }
     }
-
-    // Increment period counter
-    _session.currentPeriod++;
-    _session.hasWhistlePlayed = false;
-
-    notifyListeners();
-  }
-
-  void endMatch() {
-    _session.isMatchComplete = true;
-    storeActivePlayersForPeriodChange();
-    logMatchEvent(TranslationService().get('match.match_complete'), entryType: 'match_end');
-    notifyListeners();
+    
+    // Period ends when we reach or exceed the end time for current period
+    // and the whistle hasn't played yet
+    final shouldEnd = session.matchTime >= currentPeriodEndTime && !session.hasWhistlePlayed;
+    
+    return shouldEnd;
   }
 
   // Add goal for a player
-  Future<void> addGoal(String playerName, {int? timestamp}) async {
-    if (_session.players.containsKey(playerName)) {
-      _session.players[playerName]!.goals++;
-      _session.teamGoals++;
+  Future<void> addPlayerGoal(String playerName, {int? timestamp}) async {
+    if (session.players.containsKey(playerName)) {
+      session.players[playerName]!.goals++;
+      session.teamGoals++;
       
       // Log the goal with timestamp if provided
-      final timeStr = _formatTime(timestamp ?? _session.matchTime);
       logMatchEvent('Goal scored by $playerName', timestamp: timestamp);
       
       notifyListeners();
@@ -1190,10 +1299,9 @@ class AppState with ChangeNotifier {
 
   // Add goal for opponent team
   Future<void> addOpponentGoal({int? timestamp}) async {
-    _session.opponentGoals++;
+    session.opponentGoals++;
     
     // Log the goal with timestamp if provided
-    final timeStr = _formatTime(timestamp ?? _session.matchTime);
     logMatchEvent('Opponent goal', timestamp: timestamp);
     
     notifyListeners();
@@ -1209,6 +1317,89 @@ class AppState with ChangeNotifier {
 
   // Get current score as a formatted string
   String getScoreDisplay() {
-    return "${_session.sessionName}: ${_session.teamGoals} - Opp: ${_session.opponentGoals}";
+    return "${session.sessionName}: ${session.teamGoals} - Opp: ${session.opponentGoals}";
   }
+
+  // Add the missing endMatch method definition correctly
+  void endMatch() {
+    print("endMatch called - final period=${session.currentPeriod}, segments=${session.matchSegments}");
+    
+    // Guard clause - only end match in final period
+    if (session.currentPeriod < session.matchSegments) {
+      print("WARNING: Attempted to end match before final period");
+      return;
+    }
+    
+    // Only proceed if match is not already marked complete
+    if (session.isMatchComplete) {
+      print("Match already marked as complete");
+      return;
+    }
+    
+    // Stop the match
+    session.matchRunning = false;
+    session.isPaused = true;
+    
+    // Set match time to exactly match the match duration for consistency
+    session.matchTime = session.matchDuration;
+    
+    // Mark the match as complete
+    session.isMatchComplete = true;
+    
+    // Store currently active players and calculate final time
+    session.activeBeforePause = [];
+    for (var playerName in session.players.keys) {
+      final player = session.players[playerName]!;
+      if (player.active) {
+        session.activeBeforePause.add(playerName);
+        
+        // Calculate final time for active players
+        if (player.lastActiveMatchTime != null) {
+          player.totalTime += (session.matchTime - player.lastActiveMatchTime!);
+        }
+        
+        // Reset active flags and last active time
+        player.lastActiveMatchTime = null;
+        player.active = false;
+      }
+    }
+    
+    // Log match end
+    logMatchEvent("Match Complete", entryType: 'match_end');
+    
+    print("Match marked as complete at time ${session.matchTime}");
+    
+    notifyListeners();
+  }
+
+  // Add the missing shouldEndMatch method definition correctly
+  bool shouldEndMatch() {
+    if (!session.enableMatchDuration) return false;
+    // Match should end if time reaches duration AND we are in the final period
+    final isFinalPeriod = session.currentPeriod == session.matchSegments;
+    return isFinalPeriod && session.matchTime >= session.matchDuration && !session.isMatchComplete;
+  }
+
+  // New method specifically for background sync adjustment
+  void updatePlayerTimesForBackgroundSync(int elapsedInBackgroundSeconds) {
+    if (elapsedInBackgroundSeconds <= 0) return;
+
+    print('AppState: Applying background sync delta of $elapsedInBackgroundSeconds s to active players');
+    bool changed = false;
+    for (var playerName in session.players.keys) {
+      final player = session.players[playerName]!;
+      // Update players who were marked as active *before* the app went to background
+      // OR who are currently marked active (if sync happens before UI fully restores state)
+      if (player.active || session.activeBeforePause.contains(playerName)) {
+         final oldTime = player.totalTime;
+         player.totalTime += elapsedInBackgroundSeconds;
+         print('  Player $playerName: ${oldTime} -> ${player.totalTime}');
+         changed = true;
+      }
+    }
+    if (changed) {
+        notifyListeners(); // Notify if any player times were updated
+    }
+  }
+
 }

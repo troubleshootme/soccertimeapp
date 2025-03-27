@@ -1,9 +1,20 @@
-import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:soccertimeapp/models/session.dart';
-import 'package:soccertimeapp/models/player.dart';
-import 'package:soccertimeapp/models/session_settings.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+// Create a local Session class with all required properties
+class Session {
+  final int id;
+  final String name;
+  final String sessionName;
+  final bool enableVibration;
+  final bool enableMatchDuration;
+  
+  Session({
+    required this.id,
+    required this.name,
+    required this.sessionName,
+    this.enableVibration = true,
+    this.enableMatchDuration = true,
+  });
+}
 
 class HiveSessionDatabase {
   static const String sessionBoxName = 'sessions';
@@ -327,33 +338,51 @@ class HiveSessionDatabase {
     print('Cleared all sessions from Hive database');
   }
 
-  Future<void> updateSettings(Session session) async {
-    if (session.sessionName.isEmpty) return;
+  // Add method to sync session from SQLite database to Hive
+  Future<bool> syncSessionFromSQLite(int sessionId, Map<String, dynamic> sessionData) async {
+    await init();
     
-    final settings = {
-      'enableMatchDuration': session.enableMatchDuration,
-      'matchDuration': session.matchDuration,
-      'matchSegments': session.matchSegments,
-      'enableTargetDuration': session.enableTargetDuration,
-      'targetPlayDuration': session.targetPlayDuration,
-      'enableSound': session.enableSound,
-      'enableVibration': session.enableVibration,
-      'matchRunning': session.matchRunning,
-      'matchTime': session.matchTime,
-      'currentPeriod': session.currentPeriod,
-      'hasWhistlePlayed': session.hasWhistlePlayed,
-      'isPaused': session.isPaused,
-      'isMatchComplete': session.isMatchComplete,
-    };
+    try {
+      // Convert to Map<dynamic, dynamic> for Hive storage
+      final Map<dynamic, dynamic> storageMap = {};
+      sessionData.forEach((k, v) {
+        storageMap[k] = v;
+      });
+      
+      // Store in Hive using the same ID as the key
+      await _sessionsBox!.put(sessionId, storageMap);
+      print('Synced session with ID $sessionId from SQLite to Hive');
+      return true;
+    } catch (e) {
+      print('Error syncing session from SQLite to Hive: $e');
+      return false;
+    }
+  }
+
+  Future<void> updateSettings(Map<String, dynamic> sessionSettings) async {
+    await init();
     
-    final sessionId = await getSessionIdByName(session.sessionName);
-    if (sessionId != null) {
-      await saveSessionSettings(sessionId, settings);
+    try {
+      final sessionId = sessionSettings['id'];
+      if (sessionId == null) {
+        print('Cannot update session settings: No ID provided');
+        return;
+      }
+      
+      // Convert to Map<dynamic, dynamic> for Hive storage
+      final Map<dynamic, dynamic> storageMap = {};
+      sessionSettings.forEach((k, v) {
+        storageMap[k] = v;
+      });
+      
+      await _settingsBox!.put(sessionId, storageMap);
+      print('Saved settings for session $sessionId to Hive');
+    } catch (e) {
+      print('Error updating session settings: $e');
     }
   }
 
   Future<int?> getSessionIdByName(String sessionName) async {
-    final box = await Hive.openBox('sessions');
     final sessions = await getAllSessions();
     final session = sessions.firstWhere(
       (s) => s['name'] == sessionName,

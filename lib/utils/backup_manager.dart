@@ -177,15 +177,13 @@ class BackupManager {
       if (!backupSaved) {
         try {
           final documentsDir = await getApplicationDocumentsDirectory();
-          if (documentsDir != null) {
-            print('Trying to save to documents directory: ${documentsDir.path}');
-            final backupFile = File('${documentsDir.path}/$backupFileName');
-            
-            await backupFile.writeAsString(jsonData);
-            filePath = backupFile.path;
-            print('Backup saved to documents directory: $filePath');
-            backupSaved = true;
-          }
+          print('Trying to save to documents directory: ${documentsDir.path}');
+          final backupFile = File('${documentsDir.path}/$backupFileName');
+          
+          await backupFile.writeAsString(jsonData);
+          filePath = backupFile.path;
+          print('Backup saved to documents directory: $filePath');
+          backupSaved = true;
         } catch (e) {
           print('Failed to save to documents directory: $e');
         }
@@ -209,54 +207,6 @@ class BackupManager {
       );
       return null;
     }
-  }
-  
-  /// Fallback method using share if direct file access fails
-  Future<String?> _fallbackToShareBackup(BuildContext context) async {
-    // Initialize the database
-    await HiveSessionDatabase.instance.init();
-    
-    // Get all sessions
-    final sessions = await HiveSessionDatabase.instance.getAllSessions();
-    
-    // For each session, get its players and settings
-    final backupData = <Map<String, dynamic>>[];
-    
-    for (final session in sessions) {
-      final sessionId = session['id'];
-      final players = await HiveSessionDatabase.instance.getPlayersForSession(sessionId);
-      final settings = await HiveSessionDatabase.instance.getSessionSettings(sessionId);
-      
-      backupData.add({
-        'session': session,
-        'players': players,
-        'settings': settings,
-      });
-    }
-    
-    // Convert to JSON with nice formatting for better readability
-    final jsonData = JsonEncoder.withIndent('  ').convert(backupData);
-    
-    // Generate a unique filename with timestamp
-    final backupFileName = _getBackupFileName();
-    
-    // Create temp file and use share_plus
-    final tempDir = await getTemporaryDirectory();
-    final tempFile = File('${tempDir.path}/$backupFileName');
-    await tempFile.writeAsString(jsonData);
-    
-    await Share.shareXFiles(
-      [XFile(tempFile.path)],
-      subject: 'Soccer Time App Backup',
-      text: 'Please save this file to your Downloads folder as $backupFileName',
-    );
-    
-    print('Backup shared using share_plus (fallback method)');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Please save the file to your Downloads folder as "$backupFileName"')),
-    );
-    
-    return 'Shared as $backupFileName';
   }
   
   /// Shows a dialog to select which backup file to restore
@@ -385,143 +335,138 @@ class BackupManager {
     try {
       // Request permission first
       final hasPermission = await _requestStoragePermission();
-      if (!hasPermission) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Storage permission is required to access backup files.'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-        return false;
-      }
-      
-      // Find available backup files in all possible paths
-      final availableBackups = await _findBackupFiles();
-      
-      if (availableBackups.isEmpty) {
-        // Show error that no backup files were found
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('No backup files found in Downloads folder.'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-        return false;
-      }
-      
-      // Sort backups by date (newest first)
-      availableBackups.sort((a, b) => b.path.compareTo(a.path));
-      
-      // Show dialog to select which backup to restore
-      final result = await _showBackupSelectionDialog(context, availableBackups);
-      if (result == null) {
-        return false; // User canceled
-      }
-      
-      final selectedBackup = result['backup'] as File;
-      final deleteOtherBackups = result['deleteOthers'] as bool;
-      
-      // Read the selected backup file
-      final backupContent = await selectedBackup.readAsString();
-      
-      // Parse JSON
-      late List<dynamic> backupData;
-      try {
-        backupData = jsonDecode(backupContent);
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Invalid backup file format. Please check the content and try again.')),
-        );
-        return false;
-      }
-      
-      // Confirm with user before proceeding
-      final shouldRestore = await _showRestoreConfirmation(context);
-      if (!shouldRestore) {
-        return false;
-      }
-      
-      // Initialize database
-      await HiveSessionDatabase.instance.init();
-      
-      // Clear existing data
-      await HiveSessionDatabase.instance.clearAllSessions();
-      
-      // Restore each session with its players and settings
-      int restoredSessions = 0;
-      for (final item in backupData) {
-        final session = item['session'];
-        final players = item['players'];
-        final settings = item['settings'];
+      if (hasPermission) {
         
-        // Create session
-        final sessionId = await HiveSessionDatabase.instance.insertSession(session['name']);
+        // Find available backup files in all possible paths
+        final availableBackups = await _findBackupFiles();
         
-        // Restore players
-        for (final player in players) {
-          await HiveSessionDatabase.instance.insertPlayer(
-            sessionId, 
-            player['name'], 
-            player['timer_seconds'] ?? 0,
+        if (availableBackups.isEmpty) {
+          // Show error that no backup files were found
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('No backup files found in Downloads folder.'),
+              duration: Duration(seconds: 2),
+            ),
           );
+          return false;
         }
         
-        // Restore settings
-        if (settings != null) {
-          await HiveSessionDatabase.instance.saveSessionSettings(sessionId, settings);
+        // Sort backups by date (newest first)
+        availableBackups.sort((a, b) => b.path.compareTo(a.path));
+        
+        // Show dialog to select which backup to restore
+        final result = await _showBackupSelectionDialog(context, availableBackups);
+        if (result == null) {
+          return false; // User canceled
         }
         
-        restoredSessions++;
-      }
-      
-      // Delete other backups if requested
-      if (deleteOtherBackups) {
-        final backups = await _findBackupFiles();
-        int deletedCount = 0;
+        final selectedBackup = result['backup'] as File;
+        final deleteOtherBackups = result['deleteOthers'] as bool;
         
-        // Get information about the selected backup file
-        final selectedStat = await selectedBackup.stat();
-        final selectedIdentifier = '${selectedStat.size}_${selectedStat.modified.millisecondsSinceEpoch}_${selectedStat.mode}';
+        // Read the selected backup file
+        final backupContent = await selectedBackup.readAsString();
         
-        // Don't delete the backup we just restored from or its symlinks
-        for (var backup in backups) {
-          try {
-            // Check if it's the same physical file as our selected backup
-            final backupStat = await backup.stat();
-            final backupIdentifier = '${backupStat.size}_${backupStat.modified.millisecondsSinceEpoch}_${backupStat.mode}';
-            
-            if (backup.path != selectedBackup.path) {
-              // If it's not the same path AND it's not the same physical file, delete it
-              if (backupIdentifier != selectedIdentifier) {
-                await backup.delete();
-                print('Deleted backup: ${backup.path}');
-                deletedCount++;
-              } else {
-                print('Skipping deletion of backup at ${backup.path} as it\'s a symlink to the selected backup');
-              }
-            } else {
-              print('Preserving the restored backup: ${backup.path}');
-            }
-          } catch (e) {
-            print('Error checking or deleting backup ${backup.path}: $e');
+        // Parse JSON
+        late List<dynamic> backupData;
+        try {
+          backupData = jsonDecode(backupContent);
+        } catch (e) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Invalid backup file format. Please check the content and try again.')),
+          );
+          return false;
+        }
+        
+        // Confirm with user before proceeding
+        final shouldRestore = await _showRestoreConfirmation(context);
+        if (!shouldRestore) {
+          return false;
+        }
+        
+        // Initialize database
+        await HiveSessionDatabase.instance.init();
+        
+        // Clear existing data
+        await HiveSessionDatabase.instance.clearAllSessions();
+        
+        // Restore each session with its players and settings
+        int restoredSessions = 0;
+        for (final item in backupData) {
+          final session = item['session'];
+          final players = item['players'];
+          final settings = item['settings'];
+          
+          // Create session
+          final sessionId = await HiveSessionDatabase.instance.insertSession(session['name']);
+          
+          // Restore players
+          for (final player in players) {
+            await HiveSessionDatabase.instance.insertPlayer(
+              sessionId, 
+              player['name'], 
+              player['timer_seconds'] ?? 0,
+            );
           }
+          
+          // Restore settings
+          if (settings != null) {
+            await HiveSessionDatabase.instance.saveSessionSettings(sessionId, settings);
+          }
+          
+          restoredSessions++;
         }
         
-        print('Deleted $deletedCount backup files, kept restored backup and its symlinks.');
+        // Delete other backups if requested
+        if (deleteOtherBackups) {
+          final backups = await _findBackupFiles();
+          int deletedCount = 0;
+          
+          // Get information about the selected backup file
+          final selectedStat = await selectedBackup.stat();
+          final selectedIdentifier = '${selectedStat.size}_${selectedStat.modified.millisecondsSinceEpoch}_${selectedStat.mode}';
+          
+          // Don't delete the backup we just restored from or its symlinks
+          for (var backup in backups) {
+            try {
+              // Check if it's the same physical file as our selected backup
+              final backupStat = await backup.stat();
+              final backupIdentifier = '${backupStat.size}_${backupStat.modified.millisecondsSinceEpoch}_${backupStat.mode}';
+              
+              if (backup.path != selectedBackup.path) {
+                // If it's not the same path AND it's not the same physical file, delete it
+                if (backupIdentifier != selectedIdentifier) {
+                  await backup.delete();
+                  print('Deleted backup: ${backup.path}');
+                  deletedCount++;
+                } else {
+                  print('Skipping deletion of backup at ${backup.path} as it\'s a symlink to the selected backup');
+                }
+              } else {
+                print('Preserving the restored backup: ${backup.path}');
+              }
+            } catch (e) {
+              print('Error checking or deleting backup ${backup.path}: $e');
+            }
+          }
+          
+          print('Deleted $deletedCount backup files, kept restored backup and its symlinks.');
+        }
+        
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(deleteOtherBackups
+              ? 'Successfully restored $restoredSessions sessions and deleted ${availableBackups.length - 1} other backups'
+              : 'Successfully restored $restoredSessions sessions'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+        
+        //print('Successfully restored $restoredSessions sessions');
+        return true;
       }
       
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(deleteOtherBackups
-            ? 'Successfully restored $restoredSessions sessions and deleted ${availableBackups.length - 1} other backups'
-            : 'Successfully restored $restoredSessions sessions'),
-          duration: Duration(seconds: 1),
-        ),
-      );
-      
-      //print('Successfully restored $restoredSessions sessions');
-      return true;
+      return false;
     } catch (e) {
       print('Error restoring backup: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -564,9 +509,7 @@ class BackupManager {
     // Also try to get the app's documents directory
     try {
       final documentsDir = await getApplicationDocumentsDirectory();
-      if (documentsDir != null) {
-        paths.add(documentsDir.path);
-      }
+      paths.add(documentsDir.path);
     } catch (e) {
       print('Error getting documents directory: $e');
     }

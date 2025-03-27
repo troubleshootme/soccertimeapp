@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/player.dart';
-import '../models/session.dart';
 import '../providers/app_state.dart';
 import '../utils/format_time.dart';
 import '../widgets/resizable_container.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 
 class PlayerTimesScreen extends StatelessWidget {
   @override
@@ -20,13 +17,13 @@ class PlayerTimesScreen extends StatelessWidget {
             .entries
             .toList();
         players.sort((a, b) {
-          var timeA = a.value.value.active
+          var timeA = a.value.value.active && !session.isPaused
               ? a.value.value.totalTime +
-                  (DateTime.now().millisecondsSinceEpoch - a.value.value.startTime) ~/ 1000
+                  (session.matchTime - (a.value.value.lastActiveMatchTime ?? session.matchTime))
               : a.value.value.totalTime;
-          var timeB = b.value.value.active
+          var timeB = b.value.value.active && !session.isPaused
               ? b.value.value.totalTime +
-                  (DateTime.now().millisecondsSinceEpoch - b.value.value.startTime) ~/ 1000
+                  (session.matchTime - (b.value.value.lastActiveMatchTime ?? session.matchTime))
               : b.value.value.totalTime;
           if (timeB != timeA) return timeB.compareTo(timeA);
           return session.currentOrder.indexOf(a.value.key).compareTo(session.currentOrder.indexOf(b.value.key));
@@ -39,40 +36,41 @@ class PlayerTimesScreen extends StatelessWidget {
           body: Padding(
             padding: const EdgeInsets.all(16.0),
             child: ResizableContainer(
-              initialHeight: kIsWeb ? 350 : 450,
+              initialHeight: 450,
               minHeight: 200,
               maxHeight: MediaQuery.of(context).size.height * 0.8,
               handleOnTop: true,
               child: SingleChildScrollView(
                 child: DataTable(
                   columns: [
-                    DataColumn(label: Text('Player', style: TextStyle(fontSize: kIsWeb ? 14 : 16, color: Colors.white))),
-                    DataColumn(label: Text('Time', style: TextStyle(fontSize: kIsWeb ? 14 : 16, color: Colors.white))),
+                    DataColumn(label: Text('Player', style: TextStyle(fontSize: 16, color: Colors.white))),
+                    DataColumn(label: Text('Time', style: TextStyle(fontSize: 16, color: Colors.white))),
                   ],
                   rows: players.map((entry) {
                     var name = entry.value.key;
                     var player = entry.value.value;
-                    var time = player.active && !session.isPaused
+                    var time = player.active && !session.isPaused && player.lastActiveMatchTime != null
                         ? player.totalTime +
-                            (DateTime.now().millisecondsSinceEpoch - player.startTime) ~/ 1000
+                            (session.matchTime - player.lastActiveMatchTime!)
                         : player.totalTime;
                     return DataRow(
                       cells: [
-                        DataCell(Text(name, style: TextStyle(fontSize: kIsWeb ? 14 : 16, color: Colors.white))),
-                        DataCell(Text(formatTime(time), style: TextStyle(fontSize: kIsWeb ? 14 : 16, color: Colors.white))),
+                        DataCell(Text(name, style: TextStyle(fontSize: 16, color: Colors.white))),
+                        DataCell(Text(formatTime(time), style: TextStyle(fontSize: 16, color: Colors.white))),
                       ],
-                      color: MaterialStateProperty.resolveWith<Color?>((states) {
-                        if (player.active) return Colors.green.withOpacity(0.2);
+                      color: WidgetStateProperty.resolveWith<Color?>((states) {
+                        if (player.active) return Colors.green.withValues(alpha: 51); // 0.2 opacity
                         if (session.enableTargetDuration && time >= session.targetPlayDuration) {
-                          return Colors.yellow.withOpacity(0.2);
+                          return Colors.yellow.withValues(alpha: 51); // 0.2 opacity
                         }
-                        return Colors.red.withOpacity(0.2);
+                        return Colors.red.withValues(alpha: 51); // 0.2 opacity
                       }),
                     );
                   }).toList(),
-                  dataRowHeight: kIsWeb ? 40 : 48,
-                  headingRowHeight: kIsWeb ? 40 : 48,
-                  columnSpacing: kIsWeb ? 20 : 30,
+                  dataRowMinHeight: 48,
+                  dataRowMaxHeight: 48,
+                  headingRowHeight: 48,
+                  columnSpacing: 30,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(10),
                     color: Colors.grey[900],

@@ -2,8 +2,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/session.dart';
-import '../models/player.dart';
-import '../models/match_log_entry.dart';
 
 class SessionService {
   static const String _baseUrl = 'http://localhost:8000/session_handler.php'; // Use relative path for local server
@@ -53,9 +51,7 @@ class SessionService {
         matchDuration: 90 * 60,
         enableMatchDuration: true,
         matchSegments: 2,
-        currentPeriod: 1,
-        players: <String, Player>{},
-        matchLog: <MatchLogEntry>[],
+        sessionName: password
       );
       
       var response = await http.post(
@@ -154,9 +150,7 @@ class SessionService {
         matchDuration: 90 * 60,
         enableMatchDuration: true,
         matchSegments: 2,
-        currentPeriod: 1,
-        players: <String, Player>{},
-        matchLog: <MatchLogEntry>[],
+        sessionName: password
       );
     }
   }

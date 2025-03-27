@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class PeriodEndDialog extends StatelessWidget {
   // Add callback for next period transition
@@ -16,20 +17,27 @@ class PeriodEndDialog extends StatelessWidget {
       final currentPeriod = appState.session.currentPeriod;
       final totalPeriods = appState.session.matchSegments;
       final isGameOver = currentPeriod >= totalPeriods;
+      
+      // Determine period name (Quarter/Half)
+      final periodName = totalPeriods == 2 ? 'Half' : 'Quarter';
+      final currentOrdinal = _getOrdinalNumber(currentPeriod);
+      final nextOrdinal = _getOrdinalNumber(currentPeriod + 1);
 
-      return WillPopScope(
-        onWillPop: () async {
-          // Prevent back button from dismissing dialog without handling state
-          if (isGameOver) {
-            // Only allow dismissal when game is over
+      // Get the score for match complete screen
+      final teamGoals = appState.session.teamGoals;
+      final opponentGoals = appState.session.opponentGoals;
+      final teamName = appState.session.sessionName;
+
+      return PopScope(
+        canPop: isGameOver,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) {
             appState.saveSession();
-            return true;
           }
-          return false; // Don't allow pop during mid-game periods
         },
         child: AlertDialog(
           title: Text(
-            isGameOver ? 'Game Over' : 'End of Period $currentPeriod',
+            isGameOver ? 'Match Complete!' : '$currentOrdinal $periodName Ended',
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
@@ -38,7 +46,71 @@ class PeriodEndDialog extends StatelessWidget {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Remove redundant text entirely
+              // Show score when game is over
+              if (isGameOver)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16.0),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SvgPicture.asset(
+                            'assets/images/soccerball.svg',
+                            height: 24,
+                            width: 24,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Final Score',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).brightness == Brightness.dark 
+                              ? Colors.grey.shade800 
+                              : Colors.grey.shade200,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              teamName,
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            SizedBox(width: 12),
+                            Text(
+                              '$teamGoals - $opponentGoals',
+                              style: TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            SizedBox(width: 12),
+                            Text(
+                              'Opp',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ),
           actions: [
@@ -67,7 +139,7 @@ class PeriodEndDialog extends StatelessWidget {
                     borderRadius: BorderRadius.circular(30),
                   ),
                 ),
-                child: Text('Start Period ${currentPeriod + 1}',
+                child: Text('Start $nextOrdinal $periodName',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white,  
@@ -113,6 +185,22 @@ class PeriodEndDialog extends StatelessWidget {
           ),
         ],
       );
+    }
+  }
+  
+  // Helper method to convert number to ordinal (1st, 2nd, etc.)
+  String _getOrdinalNumber(int number) {
+    if (number <= 0) return "0";
+    
+    switch (number) {
+      case 1:
+        return "1st";
+      case 2:
+        return "2nd";
+      case 3:
+        return "3rd";
+      default:
+        return "${number}th";
     }
   }
 }

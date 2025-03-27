@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_state.dart';
 
 class SessionScreen extends StatefulWidget {
   // ... (existing code)
@@ -7,10 +9,19 @@ class SessionScreen extends StatefulWidget {
 }
 
 class _SessionScreenState extends State<SessionScreen> {
+  final TextEditingController textController = TextEditingController();
+  
   // ... (existing code)
 
   @override
+  void dispose() {
+    textController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context); 
     // ... (existing code)
 
     return Scaffold(
@@ -23,6 +34,15 @@ class _SessionScreenState extends State<SessionScreen> {
           children: [
             // ... (existing code)
 
+            TextField(
+              controller: textController,
+              decoration: InputDecoration(
+                labelText: 'Session Name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            SizedBox(height: 16),
+            
             ElevatedButton(
               onPressed: () async {
                 final name = textController.text.trim();

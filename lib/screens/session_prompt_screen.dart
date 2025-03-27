@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'dart:async';
 import '../session_dialog.dart';
 import '../hive_database.dart';
 import '../providers/app_state.dart';
 import 'package:provider/provider.dart';
 import 'main_screen.dart';
 import '../utils/app_themes.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class SessionPromptScreen extends StatefulWidget {
   @override
@@ -15,16 +12,14 @@ class SessionPromptScreen extends StatefulWidget {
 }
 
 class _SessionPromptScreenState extends State<SessionPromptScreen> {
-  bool _isLoading = false;
-
   @override
   void initState() {
     super.initState();
     
-    // Show session dialog after build is complete
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _showSessionDialog();
-    });
+    print('SessionPromptScreen initialized - welcome screen should be visible');
+    
+    // Removing automatic session dialog display
+    // Now the dialog will only show when the user clicks the "Open Sessions" button
   }
 
   @override
@@ -48,7 +43,7 @@ class _SessionPromptScreenState extends State<SessionPromptScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Image.asset(
-              'assets/bcs-grad-logo.png',
+              'assets/images/icon-512x512.png',
               width: 150,
               height: 150,
               errorBuilder: (context, error, stackTrace) {
@@ -73,7 +68,9 @@ class _SessionPromptScreenState extends State<SessionPromptScreen> {
               'Track player times with ease',
               style: TextStyle(
                 fontSize: 16,
-                color: isDark ? AppThemes.darkText.withOpacity(0.7) : AppThemes.lightText.withOpacity(0.7),
+                color: isDark 
+                  ? AppThemes.darkText.withValues(alpha: 179) 
+                  : AppThemes.lightText.withValues(alpha: 179),
               ),
             ),
             SizedBox(height: 32),

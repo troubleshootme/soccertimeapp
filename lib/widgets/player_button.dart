@@ -4,8 +4,6 @@ import '../providers/app_state.dart';
 import '../utils/format_time.dart';
 import '../models/player.dart';
 import '../models/session.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:math' as math;
 
 class PlayerButton extends StatelessWidget {
   final String name;
@@ -25,7 +23,7 @@ class PlayerButton extends StatelessWidget {
     final appState = Provider.of<AppState>(context);
     var time = player.active && !appState.session.isPaused && !_isPeriodEnd(appState.session)
         ? player.totalTime +
-            (DateTime.now().millisecondsSinceEpoch - player.startTime) ~/ 1000
+            (player.lastActiveMatchTime != null ? appState.session.matchTime - player.lastActiveMatchTime! : 0)
         : player.totalTime;
     var progress = enableTargetDuration
         ? (time / targetPlayDuration * 100).clamp(0, 100)
@@ -63,7 +61,7 @@ class PlayerButton extends StatelessWidget {
         );
       },
       child: Container(
-        margin: EdgeInsets.only(bottom: kIsWeb ? 6 : 12),
+        margin: EdgeInsets.only(bottom: 12),
         padding: EdgeInsets.all(8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(25),
@@ -83,8 +81,8 @@ class PlayerButton extends StatelessWidget {
           boxShadow: [
             BoxShadow(
               color: player.active
-                  ? Colors.green.withOpacity(0.4)
-                  : Colors.red.withOpacity(0.4),
+                  ? Colors.green.withAlpha(102)
+                  : Colors.red.withAlpha(102),
               blurRadius: 5,
               offset: Offset(0, 5),
             ),
@@ -101,7 +99,7 @@ class PlayerButton extends StatelessWidget {
                   Text(
                     name,
                     style: TextStyle(
-                      fontSize: kIsWeb ? 20 : 24,
+                      fontSize: 24,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
                       letterSpacing: 1.5,
@@ -123,7 +121,7 @@ class PlayerButton extends StatelessWidget {
                     child: Text(
                       formatTime(time),
                       style: TextStyle(
-                        fontSize: kIsWeb ? 20 : 24,
+                        fontSize: 24,
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
                         letterSpacing: 1.2,
@@ -165,8 +163,8 @@ class PlayerButton extends StatelessWidget {
                           boxShadow: [
                             BoxShadow(
                               color: isGoalReached 
-                                ? Colors.yellow.withOpacity(0.6)
-                                : Colors.blue.withOpacity(0.4),
+                                ? Colors.yellow.withAlpha(153)
+                                : Colors.blue.withAlpha(102),
                               blurRadius: 3,
                               offset: Offset(0, 1),
                             ),

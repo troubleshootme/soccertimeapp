@@ -1,22 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'screens/session_prompt_screen.dart';
 import 'providers/app_state.dart';
 import 'screens/main_screen.dart';
 import 'screens/settings_screen.dart';
 import 'utils/app_themes.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'hive_database.dart';
 import 'dart:async';
 import 'package:wakelock_plus/wakelock_plus.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'services/translation_service.dart';
+import 'services/background_service.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter/foundation.dart';
 
 // Single global instance for error tracking
 final _errorHandler = ErrorHandler();
@@ -39,6 +37,11 @@ Future<void> requestStoragePermission() async {
   if (await Permission.videos.isDenied) {
     await Permission.videos.request();
   }
+  
+  // For background service
+  if (await Permission.notification.isDenied) {
+    await Permission.notification.request();
+  }
 }
 
 void main() {
@@ -47,6 +50,9 @@ void main() {
     
     // Initialize translation service
     await TranslationService().init();
+    
+    // Initialize background service
+    await BackgroundService().initialize();
     
     // Set preferred orientation to portrait
     await SystemChrome.setPreferredOrientations([

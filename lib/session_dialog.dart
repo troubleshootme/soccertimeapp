@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'hive_database.dart';
-import 'models/session.dart';
 import 'utils/app_themes.dart';
 import 'package:provider/provider.dart';
 import 'providers/app_state.dart';
@@ -70,7 +68,7 @@ class _SessionDialogState extends State<SessionDialog> {
     final isDark = Provider.of<AppState>(context).isDarkTheme;
     
     return Dialog(
-      backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+      backgroundColor: isDark ? AppThemes.darkCardBackground.withOpacity(0.7) : AppThemes.lightCardBackground.withOpacity(0.7),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         padding: const EdgeInsets.all(16),
@@ -83,7 +81,7 @@ class _SessionDialogState extends State<SessionDialog> {
               style: TextStyle(
                 fontSize: 24, 
                 fontWeight: FontWeight.bold,
-                color: isDark ? AppThemes.darkText : AppThemes.lightText,
+                color: isDark ? AppThemes.darkText.withOpacity(0.7) : AppThemes.lightText.withOpacity(0.7),
               )
             ),
             const SizedBox(height: 8),
@@ -102,7 +100,7 @@ class _SessionDialogState extends State<SessionDialog> {
                     onPressed: () => _showCreateSessionDialog(context),
                     style: ElevatedButton.styleFrom(
                       padding: EdgeInsets.symmetric(vertical: 16),
-                      backgroundColor: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                      backgroundColor: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       elevation: 2,
@@ -215,7 +213,7 @@ class _SessionDialogState extends State<SessionDialog> {
     showDialog(
       context: context,
       builder: (context) => Dialog(
-        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+        backgroundColor: isDark ? AppThemes.darkCardBackground.withOpacity(0.7) : AppThemes.lightCardBackground.withOpacity(0.7),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -227,7 +225,7 @@ class _SessionDialogState extends State<SessionDialog> {
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: isDark ? AppThemes.darkText : AppThemes.lightText,
+                  color: isDark ? AppThemes.darkText.withOpacity(0.7) : AppThemes.lightText.withOpacity(0.7),
                 ),
               ),
               const SizedBox(height: 16),
@@ -238,7 +236,7 @@ class _SessionDialogState extends State<SessionDialog> {
                   autofocus: true,
                   textCapitalization: TextCapitalization.sentences,
                   style: TextStyle(
-                    color: isDark ? AppThemes.darkText : AppThemes.lightText,
+                    color: isDark ? AppThemes.darkText.withOpacity(0.7) : AppThemes.lightText.withOpacity(0.7),
                   ),
                   decoration: InputDecoration(
                     labelText: 'Session Name',
@@ -248,13 +246,13 @@ class _SessionDialogState extends State<SessionDialog> {
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
                       borderSide: BorderSide(
-                        color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                        color: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
                       ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
                       borderSide: BorderSide(
-                        color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                        color: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
                         width: 2,
                       ),
                     ),
@@ -294,7 +292,7 @@ class _SessionDialogState extends State<SessionDialog> {
                     child: Text(
                       'Cancel',
                       style: TextStyle(
-                        color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                        color: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
                         letterSpacing: 1.0,
                       ),
                     )
@@ -303,7 +301,7 @@ class _SessionDialogState extends State<SessionDialog> {
                   ElevatedButton(
                     onPressed: () => _createSession(context, controller, formKey),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                      backgroundColor: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
@@ -376,18 +374,18 @@ class _SessionDialogState extends State<SessionDialog> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+        backgroundColor: isDark ? AppThemes.darkCardBackground.withOpacity(0.7) : AppThemes.lightCardBackground.withOpacity(0.7),
         title: Text(
           'Clear All Sessions',
           style: TextStyle(
-            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            color: isDark ? AppThemes.darkText.withOpacity(0.7) : AppThemes.lightText.withOpacity(0.7),
             letterSpacing: 1.0,
           ),
         ),
         content: Text(
           'Are you sure you want to delete all sessions? This action cannot be undone.',
           style: TextStyle(
-            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            color: isDark ? AppThemes.darkText.withOpacity(0.7) : AppThemes.lightText.withOpacity(0.7),
             letterSpacing: 0.5,
           ),
         ),
@@ -397,7 +395,7 @@ class _SessionDialogState extends State<SessionDialog> {
             child: Text(
               'Cancel',
               style: TextStyle(
-                color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                color: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
                 letterSpacing: 1.0,
               ),
             ),
@@ -424,7 +422,7 @@ class _SessionDialogState extends State<SessionDialog> {
     if (_isLoading) {
       return Center(
         child: CircularProgressIndicator(
-          color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+          color: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
         ),
       );
     }
@@ -476,7 +474,7 @@ class _SessionDialogState extends State<SessionDialog> {
               title: Text(
                 sessionName,
                 style: TextStyle(
-                  color: isDark ? AppThemes.darkText : AppThemes.lightText,
+                  color: isDark ? AppThemes.darkText.withOpacity(0.7) : AppThemes.lightText.withOpacity(0.7),
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -513,17 +511,17 @@ class _SessionDialogState extends State<SessionDialog> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+        backgroundColor: isDark ? AppThemes.darkCardBackground.withOpacity(0.7) : AppThemes.lightCardBackground.withOpacity(0.7),
         title: Text(
           'Delete Session',
           style: TextStyle(
-            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            color: isDark ? AppThemes.darkText.withOpacity(0.7) : AppThemes.lightText.withOpacity(0.7),
           ),
         ),
         content: Text(
           'Are you sure you want to delete "${session['name']}"?',
           style: TextStyle(
-            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            color: isDark ? AppThemes.darkText.withOpacity(0.7) : AppThemes.lightText.withOpacity(0.7),
           ),
         ),
         actions: [
@@ -532,7 +530,7 @@ class _SessionDialogState extends State<SessionDialog> {
             child: Text(
               'Cancel',
               style: TextStyle(
-                color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                color: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
               ),
             ),
           ),

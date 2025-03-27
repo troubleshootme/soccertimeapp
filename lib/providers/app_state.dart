@@ -861,6 +861,9 @@ class AppState with ChangeNotifier {
         final player = _session.players[playerName]!;
         if (player.active) {
           player.lastActiveMatchTime = currentMatchTime;
+          // Log each active player at match start
+          final enteredGame = TranslationService().get('match.entered_game');
+          _session.addMatchLogEntry("$playerName $enteredGame", entryType: 'player_entry');
         }
       }
       

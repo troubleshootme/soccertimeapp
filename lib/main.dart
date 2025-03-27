@@ -16,6 +16,7 @@ import 'dart:async';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'services/translation_service.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 // Single global instance for error tracking
 final _errorHandler = ErrorHandler();
@@ -23,6 +24,22 @@ final _errorHandler = ErrorHandler();
 // Global variables for initialization error handling
 bool hasInitializationError = false;
 String errorMessage = '';
+
+Future<void> requestStoragePermission() async {
+  if (await Permission.storage.isDenied) {
+    await Permission.storage.request();
+  }
+  // For Android 13 and above
+  if (await Permission.photos.isDenied) {
+    await Permission.photos.request();
+  }
+  if (await Permission.audio.isDenied) {
+    await Permission.audio.request();
+  }
+  if (await Permission.videos.isDenied) {
+    await Permission.videos.request();
+  }
+}
 
 void main() {
   runZonedGuarded(() async {

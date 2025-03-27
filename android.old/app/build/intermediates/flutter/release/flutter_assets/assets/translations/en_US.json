@@ -1,0 +1,119 @@
+{
+  "app": {
+    "title": "Soccer Time",
+    "version": "1.0.5"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "reset": "Reset",
+    "close": "Close",
+    "back": "Back",
+    "next": "Next",
+    "done": "Done",
+    "yes": "Yes",
+    "no": "No",
+    "ok": "OK",
+    "settings": "Settings"
+  },
+  "main_screen": {
+    "empty_roster": "Your roster is empty.\nAdd players from the menu or settings.",
+    "reset_all": "Reset",
+    "exit": "Exit",
+    "confirm_reset": "Are you sure you want to reset all timers?",
+    "reset_confirmation": "This will reset all player times and the match log."
+  },
+  "session": {
+    "session": "Session",
+    "new_session": "New Session",
+    "load_session": "Load Session",
+    "delete_session": "Delete Session",
+    "backup_sessions": "Backup Sessions",
+    "restore_sessions": "Restore Sessions",
+    "session_name": "Session Name",
+    "enter_session_name": "Enter session name",
+    "create_session": "Create Session",
+    "enter_valid_name": "Please enter a valid session name",
+    "delete_backup_after_restore": "Delete backup file after restore",
+    "backup_success": "Backup created successfully",
+    "backup_failed": "Failed to create backup",
+    "restore_success": "Restore completed successfully",
+    "restore_failed": "Failed to restore from backup"
+  },
+  "player": {
+    "player": "Player",
+    "players": "Players",
+    "add_player": "Add Player",
+    "edit_player": "Edit Player",
+    "remove_player": "Remove Player",
+    "confirm_remove": "Are you sure you want to remove this player?",
+    "name": "Name",
+    "enter_name": "Enter player name",
+    "number": "Number",
+    "active": "Active",
+    "inactive": "Inactive"
+  },
+  "match": {
+    "match": "Match",
+    "match_time": "Match Time",
+    "match_duration": "Match Duration",
+    "match_segments": "Match Segments",
+    "period": "Period",
+    "half": "Half",
+    "quarter": "Quarter",
+    "halves": "Halves",
+    "quarters": "Quarters",
+    "started": "started",
+    "ended": "ended",
+    "paused": "paused",
+    "resumed": "resumed",
+    "match_started": "Match started",
+    "match_paused": "Match paused",
+    "match_resumed": "Match resumed",
+    "match_complete": "Match Complete!",
+    "active_players_moved": "active players moving to next period",
+    "entered_game": "entered the game",
+    "left_game": "left the game",
+    "no_active_players": "no active players"
+  },
+  "time": {
+    "minutes": "minutes",
+    "seconds": "seconds",
+    "total_time": "Total Time",
+    "target_time": "Target Time",
+    "enable_match_duration": "Enable Match Duration",
+    "enable_target_duration": "Enable Target Duration"
+  },
+  "log": {
+    "match_log": "Match Log",
+    "view_log": "View Log",
+    "clear_log": "Clear Log",
+    "export_log": "Export Log",
+    "no_events": "No match events recorded yet",
+    "events_appear": "Events will appear here as the match progresses",
+    "sort_oldest": "Oldest first",
+    "sort_newest": "Newest first",
+    "just_now": "Just now",
+    "ago": "ago"
+  },
+  "settings": {
+    "app_settings": "App Settings",
+    "appearance": "Appearance",
+    "dark_mode": "Dark Mode",
+    "light_mode": "Light Mode",
+    "whistle": "Whistle",
+    "enable_sound": "Enable Sound",
+    "vibration": "Vibration",
+    "enable_vibration": "Enable Vibration"
+  },
+  "errors": {
+    "error": "Error",
+    "something_wrong": "Something went wrong",
+    "try_again": "Please try again",
+    "session_not_found": "Session not found",
+    "invalid_file": "Invalid file format",
+    "operation_failed": "Operation failed"
+  }
+} 

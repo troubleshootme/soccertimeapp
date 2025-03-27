@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../hive_database.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 class BackupManager {
   // Singleton pattern
@@ -23,24 +24,54 @@ class BackupManager {
     return '${backupFileNameBase}_$timestamp.$backupFileExt';
   }
 
-  /// Request storage permission for Android
+  /// Request storage permission for Android based on API level
   Future<bool> _requestStoragePermission() async {
     try {
-      // Check if permission is already granted
-      var status = await Permission.storage.status;
-      if (status.isGranted) {
+      // Get device info to determine Android version
+      final deviceInfo = DeviceInfoPlugin();
+      final androidInfo = await deviceInfo.androidInfo;
+      final sdkVersion = androidInfo.version.sdkInt;
+      
+      if (sdkVersion >= 33) { // Android 13 (Tiramisu) and above
+        // For Android 13+, we need these media permissions
+        final photos = await Permission.photos.request();
+        final videos = await Permission.videos.request();
+        final audio = await Permission.audio.request();
+        
+        // For full storage access (writes to Download folder) we need MANAGE_EXTERNAL_STORAGE
+        final manageStorage = await Permission.manageExternalStorage.request();
+        
+        print('Android 13+ permissions: photos=${photos.isGranted}, videos=${videos.isGranted}, audio=${audio.isGranted}, manageStorage=${manageStorage.isGranted}');
+        
+        // If MANAGE_EXTERNAL_STORAGE is not granted, we need to show special dialog
+        if (!manageStorage.isGranted) {
+          return false;
+        }
+        
+        return true;
+      } 
+      else if (sdkVersion >= 30) { // Android 11 and 12
+        // For Android 11 & 12, we need MANAGE_EXTERNAL_STORAGE for write access
+        final manageStorage = await Permission.manageExternalStorage.request();
+        print('Android 11-12 permissions: manageStorage=${manageStorage.isGranted}');
+        
+        if (!manageStorage.isGranted) {
+          return false;
+        }
+        
+        return true;
+      } 
+      else { // Android 10 and below
+        // For Android 10 and below, we use legacy storage permissions
+        final storage = await Permission.storage.request();
+        print('Android 10 or below permissions: storage=${storage.isGranted}');
+        
+        if (!storage.isGranted) {
+          return false;
+        }
+        
         return true;
       }
-      
-      // If denied, request permission
-      status = await Permission.storage.request();
-      if (status.isGranted) {
-        return true;
-      }
-      
-      // If still not granted, try requesting external storage permission
-      status = await Permission.manageExternalStorage.request();
-      return status.isGranted;
     } catch (e) {
       print('Error requesting storage permission: $e');
       return false;
@@ -53,16 +84,28 @@ class BackupManager {
       // Request permission first
       final hasPermission = await _requestStoragePermission();
       if (!hasPermission) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Storage permission denied. Cannot create backup file.'),
-            duration: Duration(seconds: 2),
-            action: SnackBarAction(
-              label: 'Settings',
-              onPressed: () {
-                openAppSettings();
-              },
-            ),
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: Text('Permission Required'),
+            content: Text('Storage permission is required to access backup files. Please grant the permission in Settings.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await openAppSettings();
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).primaryColor,
+                ),
+                child: Text('Open Settings'),
+              ),
+            ],
           ),
         );
         throw Exception('Storage permission denied');
@@ -345,14 +388,8 @@ class BackupManager {
       if (!hasPermission) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Storage permission denied. Cannot access backup files.'),
+            content: Text('Storage permission is required to access backup files.'),
             duration: Duration(seconds: 2),
-            action: SnackBarAction(
-              label: 'Settings',
-              onPressed: () {
-                openAppSettings();
-              },
-            ),
           ),
         );
         return false;
@@ -744,70 +781,75 @@ class BackupManager {
     ) ?? false;
   }
 
-  /// Shows a success message after backup
+  /// Shows a dialog when backup is successful
+  void showBackupSuccess(BuildContext context, String filePath) {
+    _showBackupSuccess(context, filePath);
+  }
+  
+  /// Internal method to show backup success dialog
   void _showBackupSuccess(BuildContext context, String filePath) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Backup saved to Downloads folder'),
-        duration: Duration(seconds: 5),
-        action: SnackBarAction(
-          label: 'Details',
-          onPressed: () {
-            showDialog(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: Text('Backup Successful'),
-                content: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('Your backup was saved to:'),
-                      SizedBox(height: 8),
-                      Container(
-                        padding: EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade200,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          filePath,
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                      SizedBox(height: 16),
-                      Text(
-                        'This file can be used to restore your data if you reinstall the app.',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: Text('OK'),
-                  ),
-                ],
+    final fileName = filePath.split('/').last;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Backup Successful'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Your data has been backed up successfully to:'),
+              SizedBox(height: 8),
+              Text(
+                filePath,
+                style: TextStyle(fontWeight: FontWeight.bold),
               ),
-            );
-          },
+              SizedBox(height: 16),
+              Text(
+                'You can copy this file to a safe location or share it using the buttons below.',
+                style: TextStyle(fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Close'),
+          ),
+          TextButton(
+            onPressed: () async {
+              try {
+                final file = File(filePath);
+                if (await file.exists()) {
+                  Share.shareXFiles(
+                    [XFile(filePath)],
+                    subject: 'Soccer Time App Backup',
+                    text: 'Backup file: $fileName',
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('File not found. It may have been moved or deleted.')),
+                  );
+                }
+              } catch (e) {
+                print('Error sharing file: $e');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error sharing file: $e')),
+                );
+              }
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).primaryColor,
+            ),
+            child: Text('Share'),
+          ),
+        ],
       ),
     );
   }
   
-  /// Public method to show backup success message
-  void showBackupSuccess(BuildContext context, String filePath) {
-    _showBackupSuccess(context, filePath);
-  }
-
   /// Restore sessions from a backup file
   Future<String> restoreFromBackup(File backupFile, {bool deleteOtherBackups = false}) async {
     try {

@@ -15,6 +15,7 @@ import 'services/translation_service.dart';
 import 'services/background_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/foundation.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 
 // Single global instance for error tracking
 final _errorHandler = ErrorHandler();
@@ -44,7 +45,18 @@ Future<void> requestStoragePermission() async {
   }
 }
 
-void main() {
+// Define a unique ID for the alarm
+const int periodEndAlarmId = 0;
+
+// The callback function for the alarm manager
+@pragma('vm:entry-point') // Mandatory annotation
+void periodEndAlarmCallback() async {
+  // ... callback logic ...
+  print("ALARM CALLBACK: Fired!");
+  // ...
+}
+
+void main() async {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
     
@@ -107,6 +119,9 @@ void main() {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, 
         overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom]);
     }
+    
+    // Initialize Alarm Manager
+    await AndroidAlarmManager.initialize();
     
     runApp(
       // Wrap everything in an error boundary

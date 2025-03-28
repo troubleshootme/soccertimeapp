@@ -27,51 +27,22 @@ class BackupManager {
   /// Request storage permission for Android based on API level
   Future<bool> _requestStoragePermission() async {
     try {
-      // Get device info to determine Android version
-      final deviceInfo = DeviceInfoPlugin();
-      final androidInfo = await deviceInfo.androidInfo;
-      final sdkVersion = androidInfo.version.sdkInt;
-      
-      if (sdkVersion >= 33) { // Android 13 (Tiramisu) and above
-        // For Android 13+, we need these media permissions
-        final photos = await Permission.photos.request();
-        final videos = await Permission.videos.request();
-        final audio = await Permission.audio.request();
-        
-        // For full storage access (writes to Download folder) we need MANAGE_EXTERNAL_STORAGE
-        final manageStorage = await Permission.manageExternalStorage.request();
-        
-        print('Android 13+ permissions: photos=${photos.isGranted}, videos=${videos.isGranted}, audio=${audio.isGranted}, manageStorage=${manageStorage.isGranted}');
-        
-        // If MANAGE_EXTERNAL_STORAGE is not granted, we need to show special dialog
-        if (!manageStorage.isGranted) {
-          return false;
-        }
-        
-        return true;
-      } 
-      else if (sdkVersion >= 30) { // Android 11 and 12
-        // For Android 11 & 12, we need MANAGE_EXTERNAL_STORAGE for write access
-        final manageStorage = await Permission.manageExternalStorage.request();
-        print('Android 11-12 permissions: manageStorage=${manageStorage.isGranted}');
-        
-        if (!manageStorage.isGranted) {
-          return false;
-        }
-        
-        return true;
-      } 
-      else { // Android 10 and below
-        // For Android 10 and below, we use legacy storage permissions
-        final storage = await Permission.storage.request();
-        print('Android 10 or below permissions: storage=${storage.isGranted}');
-        
-        if (!storage.isGranted) {
-          return false;
-        }
-        
+      // Check if we already have the permission
+      final status = await Permission.manageExternalStorage.status;
+      if (status.isGranted) {
         return true;
       }
+
+      // Request full storage access permission
+      final manageStorage = await Permission.manageExternalStorage.request();
+      print('Storage permission status: manageStorage=${manageStorage.isGranted}');
+      
+      // If permission is denied, show a dialog explaining why we need it
+      if (!manageStorage.isGranted) {
+        throw Exception('Full storage access is required to backup/restore your match data to the Downloads folder.');
+      }
+      
+      return manageStorage.isGranted;
     } catch (e) {
       print('Error requesting storage permission: $e');
       return false;
@@ -81,15 +52,27 @@ class BackupManager {
   /// Creates a backup of all session data and saves it directly to the Downloads folder
   Future<String?> backupSessions(BuildContext context) async {
     try {
-      // Request permission first
-      final hasPermission = await _requestStoragePermission();
-      if (!hasPermission) {
+      // Request permission first with explanation
+      final hasPermission = await _requestStoragePermission().catchError((e) async {
+        // Show informative dialog about why we need the permission
         await showDialog(
           context: context,
           barrierDismissible: false,
           builder: (context) => AlertDialog(
-            title: Text('Permission Required'),
-            content: Text('Storage permission is required to access backup files. Please grant the permission in Settings.'),
+            title: Text('Storage Permission Required'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Soccer Time needs full storage access to:'),
+                SizedBox(height: 8),
+                Text('• Save backup files to Downloads'),
+                Text('• Restore from existing backups'),
+                Text('• Manage backup files'),
+                SizedBox(height: 16),
+                Text('Please grant "All files access" permission in the next screen.'),
+              ],
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -108,7 +91,11 @@ class BackupManager {
             ],
           ),
         );
-        throw Exception('Storage permission denied');
+        return false;
+      });
+
+      if (!hasPermission) {
+        return null;
       }
       
       // Initialize the database

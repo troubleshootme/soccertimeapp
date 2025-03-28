@@ -25,24 +25,16 @@ final _errorHandler = ErrorHandler();
 bool hasInitializationError = false;
 String errorMessage = '';
 
-Future<void> requestStoragePermission() async {
-  if (await Permission.storage.isDenied) {
-    await Permission.storage.request();
-  }
-  // For Android 13 and above
-  if (await Permission.photos.isDenied) {
-    await Permission.photos.request();
-  }
-  if (await Permission.audio.isDenied) {
-    await Permission.audio.request();
-  }
-  if (await Permission.videos.isDenied) {
-    await Permission.videos.request();
-  }
+Future<void> _requestPermissions() async {
+  print("Requesting necessary permissions at startup...");
   
-  // For background service
-  if (await Permission.notification.isDenied) {
-    await Permission.notification.request();
+  // Request notification permission for background service
+  final notificationStatus = await Permission.notification.request();
+  print("Notification permission status: $notificationStatus");
+  
+  // Request battery optimization permission for background service
+  if (await Permission.ignoreBatteryOptimizations.isDenied) {
+    await Permission.ignoreBatteryOptimizations.request();
   }
 }
 
@@ -125,25 +117,6 @@ void main() async {
       ),
     ),
   );
-}
-
-// Function to request all necessary permissions at startup
-Future<void> _requestPermissions() async {
-  print("Requesting necessary permissions at startup...");
-  
-  // Request notification permission for Android 13+
-  final notificationStatus = await Permission.notification.request();
-  print("Notification permission status: $notificationStatus");
-  
-  // Request post notifications permission explicitly
-  if (await Permission.notification.isDenied) {
-    await Permission.notification.request();
-  }
-  
-  // Request battery optimization permission
-  if (await Permission.ignoreBatteryOptimizations.isDenied) {
-    await Permission.ignoreBatteryOptimizations.request();
-  }
 }
 
 // Centralized error handling

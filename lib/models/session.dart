@@ -1,12 +1,33 @@
 import '../models/player.dart';
 import '../models/match_log_entry.dart';
+import 'package:hive/hive.dart';
+import 'package:flutter/foundation.dart';
 
-class Session {
+class Session extends ChangeNotifier {
   final Map<String, Player> players = {};
   final List<String> currentOrder = [];
   List<String> activeBeforePause = [];
   
-  int matchTime = 0;
+  @HiveField(20)
+  int _matchTime = 0;
+  
+  // New field to track UI timer state separately
+  @HiveField(21)
+  int _uiMatchTime = 0;
+  
+  int get matchTime => _matchTime;
+  int get uiMatchTime => _uiMatchTime;
+  
+  set matchTime(int value) {
+    _matchTime = value;
+    notifyListeners();
+  }
+  
+  set uiMatchTime(int value) {
+    _uiMatchTime = value;
+    notifyListeners();
+  }
+  
   int currentPeriod = 1;
   bool hasWhistlePlayed = false;
   bool matchRunning = false;
@@ -83,7 +104,7 @@ class Session {
   
   void resetSessionState() {
     // Reset match time and period tracking
-    matchTime = 0;
+    _matchTime = 0;
     currentPeriod = 1;
     hasWhistlePlayed = false;
     matchRunning = false;
@@ -119,14 +140,14 @@ class Session {
   
   // Format the current match time as mm:ss
   String get formattedMatchTime {
-    final minutes = matchTime ~/ 60;
-    final seconds = matchTime % 60;
+    final minutes = _matchTime ~/ 60;
+    final seconds = _matchTime % 60;
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
   
   // Add a new log entry
   void addMatchLogEntry(String details, {String entryType = 'standard', int? customMatchTime}) {
-    final timeToUse = customMatchTime ?? matchTime;
+    final timeToUse = customMatchTime ?? _matchTime;
     final minutes = timeToUse ~/ 60;
     final seconds = timeToUse % 60;
     final formattedTime = '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
@@ -169,7 +190,7 @@ class Session {
         'activeBeforePause': activeBeforePause,
         'targetPlayDuration': targetPlayDuration,
         'enableTargetDuration': enableTargetDuration,
-        'matchTime': matchTime,
+        'matchTime': _matchTime,
         'matchStartTime': 0,
         'matchRunning': matchRunning,
         'matchDuration': matchDuration,
@@ -266,7 +287,7 @@ class Session {
     );
     
     // Copy over other state
-    newSession.matchTime = matchTime ?? this.matchTime;
+    newSession._matchTime = matchTime ?? _matchTime;
     newSession.currentPeriod = currentPeriod ?? this.currentPeriod;
     newSession.hasWhistlePlayed = hasWhistlePlayed ?? this.hasWhistlePlayed;
     newSession.isPaused = isPaused ?? this.isPaused;

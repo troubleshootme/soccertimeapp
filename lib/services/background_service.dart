@@ -4,14 +4,23 @@ import 'package:flutter_background/flutter_background.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:vibration/vibration.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import '../providers/app_state.dart';
+import 'package:meta/meta.dart';
 
+@pragma('vm:entry-point')
 class BackgroundService {
   static const String BACKGROUND_ENABLED_KEY = 'background_service_enabled';
+  static const int PERIOD_END_ALARM_ID = 42; // Unique ID for our period end alarm
   
   // Singleton instance
+  @pragma('vm:entry-point')
   static final BackgroundService _instance = BackgroundService._internal();
+  
+  @pragma('vm:entry-point')
   factory BackgroundService() => _instance;
+  
+  @pragma('vm:entry-point')
   BackgroundService._internal();
 
   bool _isInitialized = false;
@@ -35,6 +44,7 @@ class BackgroundService {
   );
 
   // Initialize background service
+  @pragma('vm:entry-point')
   Future<bool> initialize() async {
     if (_isInitialized) return true;
     
@@ -42,6 +52,9 @@ class BackgroundService {
     
     // Request Android permissions explicitly
     await _requestPermissions();
+    
+    // Initialize Android Alarm Manager
+    await AndroidAlarmManager.initialize();
     
     // Check if the device supports background execution
     bool hasPermissions = await FlutterBackground.hasPermissions;
@@ -79,6 +92,7 @@ class BackgroundService {
   }
 
   // Start the background service
+  @pragma('vm:entry-point')
   Future<bool> startBackgroundService() async {
     print("startBackgroundService called, initialized: $_isInitialized");
     if (!_isInitialized) {
@@ -157,6 +171,7 @@ class BackgroundService {
     }
   }
 
+  @pragma('vm:entry-point')
   void startBackgroundTimer(AppState appState) {
     _backgroundTimer?.cancel();
     
@@ -173,111 +188,75 @@ class BackgroundService {
     print("  Match Time    : ${appState.session.matchTime}");
     print("  Period        : ${appState.session.currentPeriod}/${appState.session.matchSegments}");
     
-    // Calculate period end time for more accurate checking
+    // Calculate period end time and schedule alarm
     final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
     final currentPeriodEndTime = periodDuration * appState.session.currentPeriod;
+    
     print("Current period end time: $currentPeriodEndTime (running period ${appState.session.currentPeriod})");
+    
+    // If we're already past period end time, force end period immediately
+    if (appState.session.matchTime >= currentPeriodEndTime && 
+        appState.session.enableMatchDuration && 
+        !appState.session.hasWhistlePlayed &&
+        appState.session.currentPeriod < appState.session.matchSegments) {
+      print("Match time already past period end, forcing period end");
+      appState.session.matchTime = currentPeriodEndTime;
+      _periodEndDetected = true;
+      appState.endPeriod();
+      appState.session.isPaused = true;
+      appState.session.matchRunning = false;
+      return;
+    }
     
     // Update notification with initial match information
     _updateBackgroundNotification(
       _getMatchTimeNotificationText(appState.session.matchTime, currentPeriodEndTime, appState.session.currentPeriod, appState.session.matchSegments)
     );
     
+    if (appState.session.enableMatchDuration && !appState.session.hasWhistlePlayed) {
+      final timeUntilPeriodEnd = currentPeriodEndTime - appState.session.matchTime;
+      
+      if (timeUntilPeriodEnd > 0) {
+        _schedulePeriodEndAlarm(timeUntilPeriodEnd, appState);
+      }
+    }
+    
     _backgroundTimer = Timer.periodic(Duration(seconds: 1), (timer) {
       if (appState.session.matchRunning && !appState.session.isPaused) {
         final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-        // Use appState's lastUpdateTime as the *single source of truth* for last update time
-        final lastUpdate = appState.session.lastUpdateTime ?? now; // Fallback to now if null
+        final lastUpdate = appState.session.lastUpdateTime ?? now;
         final elapsed = now - lastUpdate;
 
-        // --- START Detailed Logging ---
-        print('--- BG Timer Tick ---');
-        print('  Now        : $now s');
-        print('  LastUpdate : $lastUpdate s');
-        print('  Elapsed    : $elapsed s');
-        // --- END Detailed Logging ---
-
         if (elapsed > 0) {
-          final oldMatchTime = appState.session.matchTime;
+          // Get current match time from app state
+          final currentMatchTime = appState.session.matchTime;
           
           // Calculate period boundary information
           final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
           final currentPeriodEndTime = periodDuration * appState.session.currentPeriod;
           
-          // Check for period countdown vibration (last 5 seconds)
-          if (appState.session.enableMatchDuration && 
-              appState.session.enableVibration && 
-              !appState.session.hasWhistlePlayed) {
-              
-            final timeUntilPeriodEnd = currentPeriodEndTime - oldMatchTime;
-            
-            // If we're in the last 5 seconds of the period, trigger vibration
-            if (timeUntilPeriodEnd <= 5 && timeUntilPeriodEnd > 0) {
-              // Only vibrate once per second by tracking the last vibration time
-              final shouldVibrate = oldMatchTime > (appState.session.lastVibrationSecond ?? -1);
-              
-              if (shouldVibrate) {
-                // Trigger vibration - intensity increases as we get closer to end
-                _vibrateCountdown(timeUntilPeriodEnd.toInt());
-                
-                // Update last vibration time to current match time
-                appState.session.lastVibrationSecond = oldMatchTime;
-                
-                print("Background vibration at T-${timeUntilPeriodEnd.toInt()} seconds to period end");
-                
-                // Update notification to show countdown
-                final periodName = appState.session.matchSegments == 2 ? 'Half' : 'Quarter';
-                final countdownText = "⚠️ ${timeUntilPeriodEnd.toInt()} SECONDS TO ${appState.session.currentPeriod}${_getOrdinalSuffix(appState.session.currentPeriod)} $periodName END! ⚠️";
-                _updateBackgroundNotification(countdownText);
-              }
-            }
-          }
-          
-          // Check if this update would cross the period boundary
-          final wouldCrossPeriodBoundary = oldMatchTime < currentPeriodEndTime && 
-              oldMatchTime + elapsed >= currentPeriodEndTime;
-              
-          // If we would cross the boundary, set time exactly to the period end
-          if (wouldCrossPeriodBoundary && 
+          // Check if we would cross or reach period end
+          if (currentMatchTime >= currentPeriodEndTime && 
               appState.session.enableMatchDuration && 
               !appState.session.hasWhistlePlayed &&
               appState.session.currentPeriod < appState.session.matchSegments) {
               
-            print("Background timer would cross period boundary - forcing exact end time");
-            
-            // Set match time to exactly the period end time
-            appState.session.matchTime = currentPeriodEndTime;
-            
-            // Update player times up to the period end
-            for (var playerName in appState.session.players.keys) {
-              final player = appState.session.players[playerName]!;
-              if (player.active && player.lastActiveMatchTime != null) {
-                final timeToAdd = currentPeriodEndTime - player.lastActiveMatchTime!;
-                if (timeToAdd > 0) {
-                  player.totalTime += timeToAdd;
-                  player.lastActiveMatchTime = null; // Reset as player will be deactivated
-                }
-              }
-            }
+            print("Background timer detected period end condition");
+            print("Current time: $currentMatchTime, Period end: $currentPeriodEndTime");
             
             // Record that a period end was detected
             _periodEndDetected = true;
             
-            // Call endPeriod to handle pausing and state changes
-            appState.endPeriod();
-            
-            // Trigger a strong period-end vibration
-            if (appState.session.enableVibration) {
-              _vibratePeriodEnd();
-            }
-            
-            // Update lastUpdateTime to now
+            // Update lastUpdateTime
             appState.session.lastUpdateTime = now;
             _lastBackgroundTimestamp = now;
             
+            // Call endPeriod to handle pausing and state changes
+            appState.endPeriod();
+            
             // Update notification to show period ended
             final periodName = appState.session.matchSegments == 2 ? 'Half' : 'Quarter';
-            final periodEndText = "🔔 ${appState.session.currentPeriod}${_getOrdinalSuffix(appState.session.currentPeriod)} $periodName ENDED! 🔔 Vibrating every 10s until you return";
+            final periodEndText = "🔔 ${appState.session.currentPeriod}${_getOrdinalSuffix(appState.session.currentPeriod)} $periodName ENDED! 🔔";
             _updateBackgroundNotification(periodEndText);
             
             print("Period ended in background at exactly $currentPeriodEndTime");
@@ -288,95 +267,14 @@ class BackgroundService {
             // Pause the match
             appState.session.isPaused = true;
             appState.session.matchRunning = false;
-          }
-          // Check if this update would cross the match end boundary in final period
-          else if (appState.session.enableMatchDuration && 
-              appState.session.currentPeriod >= appState.session.matchSegments &&
-              oldMatchTime < appState.session.matchDuration && 
-              oldMatchTime + elapsed >= appState.session.matchDuration &&
-              !appState.session.isMatchComplete) {
-              
-            print("Background timer would cross match end boundary - forcing exact end time");
-            
-            // Set match time to exactly the match duration
-            appState.session.matchTime = appState.session.matchDuration;
-            
-            // Update player times up to the match end
-            for (var playerName in appState.session.players.keys) {
-              final player = appState.session.players[playerName]!;
-              if (player.active && player.lastActiveMatchTime != null) {
-                final timeToAdd = appState.session.matchDuration - player.lastActiveMatchTime!;
-                if (timeToAdd > 0) {
-                  player.totalTime += timeToAdd;
-                  player.lastActiveMatchTime = null; // Reset as player will be deactivated
-                }
-              }
-            }
-            
-            // Record that a match end was detected
-            _matchEndDetected = true;
-            
-            // Call endMatch to handle state changes
-            appState.endMatch();
-            
-            // Trigger a strong match-end vibration
-            if (appState.session.enableVibration) {
-              _vibrateMatchEnd();
-            }
-            
-            // Update lastUpdateTime to now
-            appState.session.lastUpdateTime = now;
-            _lastBackgroundTimestamp = now;
-            
-            // Update notification to show match ended
-            _updateBackgroundNotification("🏁 MATCH COMPLETED! 🏁 Vibrating every 10s until you return");
-            
-            print("Match ended in background at exactly ${appState.session.matchDuration}");
-            
-            // Start periodic reminder vibrations with vibration setting
-            _startReminderVibrations(isMatchEnd: true, enableVibration: appState.session.enableVibration);
-            
-            // Mark match as complete
-            appState.session.isMatchComplete = true;
-            
-            // Pause the match
-            appState.session.isPaused = true;
-            appState.session.matchRunning = false;
-          }
-          // Normal time update - no boundary crossing
-          else {
-            // --- More Logging ---
-            final timeBeforeUpdate = appState.session.matchTime;
-            // Update match time using AppState's method (pass elapsed seconds)
-            appState.updateMatchTimer(elapsedSeconds: elapsed);
-            final newMatchTime = appState.session.matchTime;
-            print('  UpdateType : Normal Tick');
-            print('  OldMatchTime: $timeBeforeUpdate');
-            print('  NewMatchTime: $newMatchTime');
-            if (newMatchTime < timeBeforeUpdate) {
-               print('  *** WARNING: BG Timer decreased! Old: $timeBeforeUpdate, New: $newMatchTime ***');
-            }
-            // --- End More Logging ---
-
-            // Store timestamp of last update *after* update occurs
-            // CRITICAL: Update AppState's timestamp
-            appState.session.lastUpdateTime = now;
-            _lastBackgroundTimestamp = now; // Keep local copy for reference if needed
-
-            // Update notification text periodically
-            if (elapsed >= 5 || newMatchTime % 5 == 0) { // Update every 5 seconds
-              final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
-              final currentPeriodEndTime = periodDuration * appState.session.currentPeriod;
+          } else {
+            // Just update notification text periodically
+            if (elapsed >= 5 || currentMatchTime % 5 == 0) {
               _updateBackgroundNotification(
-                _getMatchTimeNotificationText(newMatchTime, currentPeriodEndTime, appState.session.currentPeriod, appState.session.matchSegments)
+                _getMatchTimeNotificationText(currentMatchTime, currentPeriodEndTime, appState.session.currentPeriod, appState.session.matchSegments)
               );
             }
           }
-        } else if (elapsed < 0) {
-            // Handle potential clock adjustments
-            print("Warning: BG Timer clock adjustment detected (elapsed time negative: $elapsed). Resetting last update time.");
-            appState.session.lastUpdateTime = now;
-            _lastBackgroundTimestamp = now;
         }
       }
     });
@@ -476,10 +374,11 @@ class BackgroundService {
   }
 
   Future<void> dispose() async {
-    print("Disposing BackgroundService"); // Added log
+    print("Disposing BackgroundService");
     stopBackgroundTimer();
     _reminderVibrationTimer?.cancel();
     _reminderVibrationTimer = null;
+    await AndroidAlarmManager.cancel(PERIOD_END_ALARM_ID);
     await stopBackgroundService();
     _lastBackgroundTimestamp = null;
     resetEventFlags();
@@ -487,30 +386,13 @@ class BackgroundService {
 
   // New methods for vibration in background
   
-  // Vibrate with appropriate pattern for countdown (5, 4, 3, 2, 1 seconds)
-  void _vibrateCountdown(int secondsRemaining) async {
-    try {
-      final hasVibrator = await Vibration.hasVibrator();
-      if (hasVibrator == true) {
-        // Intensity increases as countdown decreases
-        final amplitude = 128 + ((5 - secondsRemaining) * 25); // 128-228 range
-        final duration = 80 + ((5 - secondsRemaining) * 20); // 80-160ms range
-        
-        Vibration.vibrate(duration: duration, amplitude: amplitude);
-        print("Vibrating for countdown: $secondsRemaining seconds left, amplitude: $amplitude, duration: $duration");
-      }
-    } catch (e) {
-      print("Error while vibrating for countdown: $e");
-    }
-  }
-  
   // Vibrate with pattern for period end
   void _vibratePeriodEnd() async {
     try {
       final hasVibrator = await Vibration.hasVibrator();
       if (hasVibrator == true) {
-        // Double strong vibration pattern for period end
-        Vibration.vibrate(pattern: [0, 200, 100, 200], intensities: [0, 255, 0, 255]);
+        // Strong double vibration for period end
+        Vibration.vibrate(pattern: [0, 300, 150, 300], intensities: [0, 255, 0, 255]);
         print("Vibrating for period end");
       }
     } catch (e) {
@@ -630,6 +512,88 @@ class BackgroundService {
       print("Stopping reminder vibrations");
       _reminderVibrationTimer?.cancel();
       _reminderVibrationTimer = null;
+    }
+  }
+
+  // Schedule an alarm to wake up before period end
+  Future<void> _schedulePeriodEndAlarm(int secondsUntilPeriodEnd, AppState appState) async {
+    // Cancel any existing alarm first
+    await AndroidAlarmManager.cancel(PERIOD_END_ALARM_ID);
+    
+    // Calculate when to wake up - exactly 5 seconds before period end
+    final wakeupTime = DateTime.now().add(Duration(seconds: secondsUntilPeriodEnd - 5));
+    
+    print("Scheduling period end alarm for: $wakeupTime");
+    print("Current match time: ${appState.session.matchTime}, Seconds until period end: $secondsUntilPeriodEnd");
+    
+    // Store the expected period end time and settings for validation
+    final prefs = await SharedPreferences.getInstance();
+    final expectedEndTime = DateTime.now().millisecondsSinceEpoch ~/ 1000 + secondsUntilPeriodEnd;
+    await prefs.setInt('expected_period_end', expectedEndTime);
+    
+    // Store both sound and vibration settings
+    await prefs.setBool('vibration_enabled', appState.session.enableVibration);
+    await prefs.setBool('sound_enabled', appState.session.enableSound);
+    
+    // Schedule exact alarm that will wake up the device
+    await AndroidAlarmManager.oneShot(
+      Duration(seconds: secondsUntilPeriodEnd - 5),
+      PERIOD_END_ALARM_ID,
+      _handlePeriodEndAlarm,
+      exact: true,
+      wakeup: true,
+      rescheduleOnReboot: true,
+      alarmClock: true, // This ensures the alarm will fire even in doze mode
+    );
+  }
+  
+  // Static callback for the alarm
+  @pragma('vm:entry-point')
+  static void _handlePeriodEndAlarm() async {
+    print("Period end alarm triggered!");
+    
+    // Get the singleton instance
+    final instance = BackgroundService();
+    
+    // Get the shared preferences to check expected end time and settings
+    final prefs = await SharedPreferences.getInstance();
+    final expectedEndTime = prefs.getInt('expected_period_end') ?? 0;
+    final currentTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    
+    print("Expected period end time: $expectedEndTime");
+    print("Current time: $currentTime");
+    
+    // If we're more than 30 seconds before the expected end time, don't trigger
+    if (currentTime < expectedEndTime - 30) {
+      print("Alarm triggered too early, ignoring!");
+      return;
+    }
+    
+    // Check both sound and vibration settings
+    final vibrationEnabled = prefs.getBool('vibration_enabled') ?? true;
+    final soundEnabled = prefs.getBool('sound_enabled') ?? false;
+    
+    print("Sound enabled: $soundEnabled, Vibration enabled: $vibrationEnabled");
+    
+    // Only vibrate if enabled
+    if (vibrationEnabled && (await Vibration.hasVibrator() ?? false)) {
+      // Start countdown vibrations with precise timing
+      for (int i = 5; i > 0; i--) {
+        print("Countdown vibration: $i seconds remaining");
+        
+        // Calculate vibration parameters based on remaining time
+        final duration = 150 + ((5 - i) * 30);  // 150ms to 270ms
+        final intensity = 128 + ((5 - i) * 25);  // 128 to 228
+        
+        // Vibrate with increasing intensity
+        await Vibration.vibrate(duration: duration, amplitude: intensity);
+        
+        if (i > 1) {
+          // Wait exactly one second minus the vibration duration
+          final waitTime = 1000 - duration;
+          await Future.delayed(Duration(milliseconds: waitTime));
+        }
+      }
     }
   }
 } 

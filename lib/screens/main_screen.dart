@@ -10,8 +10,6 @@ import '../services/haptic_service.dart';
 import '../services/background_service.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/period_end_dialog.dart';
-import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
-import '../main.dart'; // Or wherever periodEndAlarmCallback is defined
 
 class MainScreen extends StatefulWidget {
   @override
@@ -28,8 +26,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   bool _isTableExpanded = true;
   final FocusNode _addPlayerFocusNode = FocusNode();
   bool _isInitialized = false;
-  final AudioService _audioService = AudioService();
-  final HapticService _hapticService = HapticService();
+  late AudioService _audioService;
+  late HapticService _hapticService;
   final BackgroundService _backgroundService = BackgroundService();
   
   // Animation controller for pulsing add button
@@ -55,7 +53,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   @override
   void initState() {
     super.initState();
-    
+    _audioService = AudioService();
+    _hapticService = HapticService();
+    _initializeScreen();
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Set the context for the AudioService
+    _audioService.setContext(context);
+  }
+  
+  void _initializeScreen() {
     // Initialize the ValueNotifier
     _matchTimeNotifier = ValueNotifier<int>(0);
     
@@ -92,18 +102,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    super.didChangeAppLifecycleState(state); // Call super
-    final appState = Provider.of<AppState>(context, listen: false);
-
     if (state == AppLifecycleState.resumed) {
-      // App came back to foreground
-      // ... existing resume logic ...
-
-      // --- Cancel any pending alarm ---
-      print("App Resumed: Cancelling potential period end alarm.");
-      AndroidAlarmManager.cancel(periodEndAlarmId);
-      // --- End Cancel ---
-
+      // App came back to foreground - refresh state
       if (mounted && _isInitialized) {
         final appState = Provider.of<AppState>(context, listen: false);
         
@@ -205,67 +205,34 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
         }
       }
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      // App went to background or became inactive
-
-      // Update lastUpdateTime before saving or scheduling
-      appState.session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      appState.saveSession(); // Save state
-
-      // --- Schedule Alarm if timer is running ---
-      if (appState.session.matchRunning &&
-          !appState.session.isPaused &&
-          appState.session.enableMatchDuration &&
-          appState.session.currentPeriod <= appState.session.matchSegments) { // Only schedule if match/periods not complete
-
-        // Calculate period end time
-        final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
-        final currentPeriodEndTime = periodDuration * appState.session.currentPeriod;
-        final currentTime = appState.session.matchTime;
-        final timeUntilPeriodEndSec = currentPeriodEndTime - currentTime;
-
-        // Only schedule if the period end is in the future and more than 5 seconds away
-        if (timeUntilPeriodEndSec > 5) {
-          // Calculate alarm time (5 seconds before period end)
-          final alarmTime = DateTime.now().add(Duration(seconds: timeUntilPeriodEndSec - 5));
-
-          print("App Background: Scheduling alarm for period end.");
-          print("  Current Time: $currentTime, Period End: $currentPeriodEndTime");
-          print("  Time Until End: $timeUntilPeriodEndSec s");
-          print("  Alarm Time: $alarmTime");
-
-          AndroidAlarmManager.oneShotAt(
-            alarmTime,
-            periodEndAlarmId, // Unique ID
-            periodEndAlarmCallback, // The function to run
-            exact: true,
-            wakeup: true,
-            allowWhileIdle: true, // Crucial for Doze mode
-            rescheduleOnReboot: false, // Doesn't need to persist across reboots
-          );
-
-          // Start flutter_background service as before
+      // App went to background - save state but don't pause timers
+      if (mounted && _isInitialized) {
+        final appState = Provider.of<AppState>(context, listen: false);
+        
+        // Make sure the session match time is updated before saving
+        appState.session.matchTime = _matchTime;
+        
+        // Update the lastUpdateTime to the current time before going to background
+        appState.session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        
+        // Save the current state to persist it
+        appState.saveSession();
+        
+        // Start background service if the match is running and not paused
+        if (appState.session.matchRunning && !appState.session.isPaused) {
+          // Start the background service to keep timers running
           print("Starting background service for match...");
           _backgroundService.startBackgroundService().then((success) {
             if (success) {
               print("Background service started successfully, starting timer...");
+              // Start the background timer to continue updating match time
               _backgroundService.startBackgroundTimer(appState);
             } else {
               print("Failed to start background service");
             }
           });
-
-        } else {
-           print("App Background: Not scheduling alarm, period end too soon or already passed.");
-           // Still start flutter_background service if needed
-             if (appState.session.matchRunning && !appState.session.isPaused) {
-                 print("Starting background service (no alarm)...");
-                 _backgroundService.startBackgroundService().then((success) { /* ... */ });
-             }
         }
-      } else {
-         print("App Background: Match not running/paused/duration disabled. Not scheduling alarm or starting service.");
       }
-      // --- End Schedule ---
     }
   }
   
@@ -955,7 +922,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     }
   }
 
-  // Modify _pauseAll to cancel the alarm
+  // Modify _pauseAll to handle timestamps
   void _pauseAll() async {
     final appState = Provider.of<AppState>(context, listen: false);
     
@@ -1079,11 +1046,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
           backgroundColor: Colors.deepOrangeAccent,
         ),
       );
-
-      // --- Cancel any pending alarm ---
-      print("Match Paused: Cancelling potential period end alarm.");
-      AndroidAlarmManager.cancel(periodEndAlarmId);
-      // --- End Cancel ---
     } else {
       // Resuming the match
       // Provide haptic feedback for resume button press
@@ -1129,17 +1091,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     await appState.saveSession();
   }
 
-  // Modify _resetAll to cancel the alarm
   void _resetAll() async {
     final appState = Provider.of<AppState>(context, listen: false);
-    await _hapticService.resetButton(context); // Vibration for initial button press
+    
+    // Provide haptic feedback for reset button press
+    await _hapticService.resetButton(context);
+    
+    // Cancel existing timer
     _matchTimer?.cancel();
-
-    // --- Cancel any pending alarm ---
-    print("Match Reset: Cancelling potential period end alarm.");
-    AndroidAlarmManager.cancel(periodEndAlarmId);
-    // --- End Cancel ---
-
+    
     _safeSetState(() {
       // Reset UI state
       _isPaused = false;

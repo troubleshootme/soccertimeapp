@@ -16,6 +16,7 @@ import 'services/background_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/foundation.dart';
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 // Single global instance for error tracking
 final _errorHandler = ErrorHandler();
@@ -45,101 +46,104 @@ Future<void> requestStoragePermission() async {
   }
 }
 
-// Define a unique ID for the alarm
-const int periodEndAlarmId = 0;
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize Hive
+  await Hive.initFlutter();
+  
+  // Request necessary permissions at startup
+  await _requestPermissions();
+  
+  // Initialize background service
+  final backgroundService = BackgroundService();
+  await backgroundService.initialize();
+  
+  // Initialize Android Alarm Manager
+  await AndroidAlarmManager.initialize();
+  
+  // Set preferred orientation to portrait
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+  
+  // Configure status bar color
+  SystemChrome.setSystemUIOverlayStyle(
+    SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.black,
+      systemNavigationBarIconBrightness: Brightness.light,
+    ),
+  );
+  
+  // Initialize directory for databases and files
+  try {
+    if (!kIsWeb) {
+      final appDocDir = await getApplicationDocumentsDirectory();
+      await Directory('${appDocDir.path}/sessions').create(recursive: true);
+    }
+  } catch (e) {
+    print('Error creating app directory: $e');
+  }
+  
+  // Enable wakelock to keep the screen on when the app is active
+  try {
+    await WakelockPlus.enable();
+  } catch (e) {
+    print('Error enabling wakelock: $e');
+  }
 
-// The callback function for the alarm manager
-@pragma('vm:entry-point') // Mandatory annotation
-void periodEndAlarmCallback() async {
-  // ... callback logic ...
-  print("ALARM CALLBACK: Fired!");
-  // ...
+  try {
+    // Initialize Hive
+    await HiveSessionDatabase.instance.init();
+    print('Hive database initialized successfully');
+  } catch (e) {
+    print('Error initializing Hive: $e');
+    hasInitializationError = true;
+    errorMessage = e.toString();
+  }
+  
+  // Set up global error handlers first
+  FlutterError.onError = _errorHandler.handleFlutterError;
+  PlatformDispatcher.instance.onError = _errorHandler.handlePlatformError;
+  
+  // Handle platform-specific concerns
+  if (Platform.isAndroid) {
+    // Configure UI mode
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, 
+      overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom]);
+  }
+  
+  runApp(
+    // Wrap everything in an error boundary
+    ErrorBoundaryWidget(
+      child: ChangeNotifierProvider(
+        create: (context) => AppState(),
+        child: SoccerTimeApp(),
+      ),
+    ),
+  );
 }
 
-void main() async {
-  runZonedGuarded(() async {
-    WidgetsFlutterBinding.ensureInitialized();
-    
-    // Initialize translation service
-    await TranslationService().init();
-    
-    // Initialize background service
-    await BackgroundService().initialize();
-    
-    // Set preferred orientation to portrait
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
-    
-    // Configure status bar color
-    SystemChrome.setSystemUIOverlayStyle(
-      SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
-        systemNavigationBarColor: Colors.black,
-        systemNavigationBarIconBrightness: Brightness.light,
-      ),
-    );
-    
-    // Initialize directory for databases and files
-    try {
-      if (!kIsWeb) {
-        final appDocDir = await getApplicationDocumentsDirectory();
-        await Directory('${appDocDir.path}/sessions').create(recursive: true);
-      }
-    } catch (e) {
-      print('Error creating app directory: $e');
-    }
-    
-    // Enable wakelock to keep the screen on when the app is active
-    try {
-      await WakelockPlus.enable();
-    } catch (e) {
-      print('Error enabling wakelock: $e');
-    }
-
-    try {
-      // Initialize Hive
-      await HiveSessionDatabase.instance.init();
-      print('Hive database initialized successfully');
-    } catch (e) {
-      print('Error initializing Hive: $e');
-      hasInitializationError = true;
-      errorMessage = e.toString();
-    }
-    
-    // Set up global error handlers first
-    FlutterError.onError = _errorHandler.handleFlutterError;
-    PlatformDispatcher.instance.onError = _errorHandler.handlePlatformError;
-    
-    // Handle platform-specific concerns
-    if (Platform.isAndroid) {
-      // Configure UI mode
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, 
-        overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom]);
-    }
-    
-    // Initialize Alarm Manager
-    await AndroidAlarmManager.initialize();
-    
-    runApp(
-      // Wrap everything in an error boundary
-      ErrorBoundaryWidget(
-        child: ChangeNotifierProvider(
-          create: (context) => AppState(),
-          child: SoccerTimeApp(),
-        ),
-      ),
-    );
-  }, (error, stack) {
-    print('Uncaught error: $error');
-    print(stack);
-    
-    // Store the error for display
-    hasInitializationError = true;
-    errorMessage = error.toString();
-  });
+// Function to request all necessary permissions at startup
+Future<void> _requestPermissions() async {
+  print("Requesting necessary permissions at startup...");
+  
+  // Request notification permission for Android 13+
+  final notificationStatus = await Permission.notification.request();
+  print("Notification permission status: $notificationStatus");
+  
+  // Request post notifications permission explicitly
+  if (await Permission.notification.isDenied) {
+    await Permission.notification.request();
+  }
+  
+  // Request battery optimization permission
+  if (await Permission.ignoreBatteryOptimizations.isDenied) {
+    await Permission.ignoreBatteryOptimizations.request();
+  }
 }
 
 // Centralized error handling

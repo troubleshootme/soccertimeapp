@@ -1114,32 +1114,32 @@ class AppState with ChangeNotifier {
       } else if (elapsedMillis != null) {
         deltaSeconds = elapsedMillis / 1000.0;
       } else {
-         // Default to 1 second if no specific elapsed time provided (e.g., background timer)
-         // This might need adjustment based on how background timer calls it.
-         // If background timer passes elapsed=1, this is fine.
+         // Default to 1 second if no specific elapsed time provided
          deltaSeconds = 1.0;
       }
 
       if (deltaSeconds <= 0) return; // Don't process zero or negative delta
 
       // Calculate new match time
-      session.matchTime += deltaSeconds.round(); // Or keep as double if more precision needed internally
+      final newMatchTime = oldMatchTime + deltaSeconds.round();
+      session.matchTime = newMatchTime;
 
       // Update active players
       for (var playerName in session.players.keys) {
         final player = session.players[playerName]!;
-        if (player.active) {
-          player.totalTime += deltaSeconds.round(); // Update total time by rounded seconds
-          // lastActiveMatchTime might not be needed if we always calculate based on delta
+        if (player.active && player.lastActiveMatchTime != null) {
+          // Calculate exact time since last update for this player
+          final timeToAdd = newMatchTime - player.lastActiveMatchTime!;
+          if (timeToAdd > 0) {
+            player.totalTime += timeToAdd;
+            player.lastActiveMatchTime = newMatchTime;
+          }
         }
       }
-      // Note: Removed explicit setting of lastUpdateTime here,
-      // it should be set by the caller (UI timer or BG timer) AFTER this update.
-      // session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
       // Only notify if time actually changed
       if (session.matchTime != oldMatchTime) {
-          notifyListeners();
+        notifyListeners();
       }
     }
   }
@@ -1266,16 +1266,6 @@ class AppState with ChangeNotifier {
     // Calculate END time for the CURRENT period
     final currentPeriodEndTime = periodDuration * session.currentPeriod;
     
-    // Check if we're in the last 5 seconds of the period
-    final timeUntilPeriodEnd = currentPeriodEndTime - session.matchTime;
-    // Vibrate only once per second in the last 5 seconds
-    if (timeUntilPeriodEnd <= 5 && timeUntilPeriodEnd > 0 && session.matchTime > (_session.lastVibrationSecond ?? -1)) {
-      if (session.enableVibration) {
-        HapticFeedback.lightImpact(); // Use HapticFeedback
-        session.lastVibrationSecond = session.matchTime; // Record the second we vibrated
-      }
-    }
-    
     // Period ends when we reach or exceed the end time for current period
     // and the whistle hasn't played yet
     final shouldEnd = session.matchTime >= currentPeriodEndTime && !session.hasWhistlePlayed;
@@ -1386,17 +1376,29 @@ class AppState with ChangeNotifier {
 
     print('AppState: Applying background sync delta of $elapsedInBackgroundSeconds s to active players');
     bool changed = false;
+    
+    // Calculate new match time
+    final newMatchTime = session.matchTime + elapsedInBackgroundSeconds;
+    
     for (var playerName in session.players.keys) {
       final player = session.players[playerName]!;
       // Update players who were marked as active *before* the app went to background
       // OR who are currently marked active (if sync happens before UI fully restores state)
-      if (player.active || session.activeBeforePause.contains(playerName)) {
+      if ((player.active || session.activeBeforePause.contains(playerName)) && player.lastActiveMatchTime != null) {
          final oldTime = player.totalTime;
-         player.totalTime += elapsedInBackgroundSeconds;
-         print('  Player $playerName: ${oldTime} -> ${player.totalTime}');
-         changed = true;
+         final timeToAdd = newMatchTime - player.lastActiveMatchTime!;
+         if (timeToAdd > 0) {
+           player.totalTime += timeToAdd;
+           player.lastActiveMatchTime = newMatchTime;
+           print('  Player $playerName: ${oldTime} -> ${player.totalTime} (+$timeToAdd)');
+           changed = true;
+         }
       }
     }
+    
+    // Update match time after player times are updated
+    session.matchTime = newMatchTime;
+    
     if (changed) {
         notifyListeners(); // Notify if any player times were updated
     }

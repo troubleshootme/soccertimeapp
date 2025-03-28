@@ -162,215 +162,215 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
         ),
-        body: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Match Duration
-                _buildSettingRow(
-                  "Match Duration",
-                  Switch(
-                    value: _enableMatchDuration,
-                    activeColor: Colors.deepPurple,
-                    activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
-                    onChanged: (value) {
-                      setState(() {
-                        _enableMatchDuration = value;
-                      });
-                      _checkForChanges();
-                    },
-                  ),
-                  _enableMatchDuration ? TextField(
-                    controller: _matchDurationController,
-                    keyboardType: TextInputType.number,
-                    style: TextStyle(
-                      color: isDark ? Colors.white : Colors.black,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: "Minutes",
-                      labelStyle: TextStyle(
-                        color: isDark ? Colors.white60 : Colors.black54,
-                      ),
-                      enabledBorder: UnderlineInputBorder(
-                        borderSide: BorderSide(
-                          color: isDark ? Colors.white30 : Colors.black26,
-                        ),
-                      ),
-                      focusedBorder: UnderlineInputBorder(
-                        borderSide: BorderSide(
-                          color: Colors.deepPurple,
-                        ),
-                      ),
-                    ),
-                  ) : Container(),
-                ),
-                SizedBox(height: 8),
-                
-                // Match Segments - only visible when match duration is enabled
-                _enableMatchDuration ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Label (left side)
-                    Expanded(
-                      flex: 3,
-                      child: Text(
-                        "Match Segments",
-                        style: TextStyle(
-                          color: isDark ? Colors.white : Colors.black,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                    // Empty space where the switch would be
-                    SizedBox(width: 60),
-                    // Dropdown aligned with the minutes field
-                    Expanded(
-                      flex: 2,
-                      child: DropdownButton<String>(
-                        value: _matchSegments,
-                        isExpanded: true,
-                        dropdownColor: isDark ? Colors.grey[850] : Colors.white,
-                        style: TextStyle(
-                          color: isDark ? Colors.white : Colors.black,
-                        ),
-                        icon: Icon(
-                          Icons.arrow_drop_down,
-                          color: isDark ? Colors.white : Colors.black,
-                        ),
-                        underline: Container(
-                          height: 1,
-                          color: isDark ? Colors.white30 : Colors.black26,
-                        ),
-                        onChanged: (String? newValue) {
-                          if (newValue != null) {
-                            setState(() {
-                              _matchSegments = newValue;
-                            });
-                            _checkForChanges();
-                          }
-                        },
-                        items: <String>['Halves', 'Quarters']
-                            .map<DropdownMenuItem<String>>((String value) {
-                          return DropdownMenuItem<String>(
-                            value: value,
-                            child: Text(value),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  ],
-                ) : Container(),
-                SizedBox(height: 8),
-                
-                // Target Play Duration
-                _buildSettingRow(
-                  "Target Play\nDuration",
-                  Switch(
-                    value: _enableTargetDuration,
-                    activeColor: Colors.deepPurple,
-                    activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
-                    onChanged: (value) {
-                      setState(() {
-                        _enableTargetDuration = value;
-                      });
-                      _checkForChanges();
-                    },
-                  ),
-                  _enableTargetDuration ? TextField(
-                    controller: _targetDurationController,
-                    keyboardType: TextInputType.number,
-                    style: TextStyle(
-                      color: isDark ? Colors.white : Colors.black,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: "Minutes",
-                      labelStyle: TextStyle(
-                        color: isDark ? Colors.white60 : Colors.black54,
-                      ),
-                      enabledBorder: UnderlineInputBorder(
-                        borderSide: BorderSide(
-                          color: isDark ? Colors.white30 : Colors.black26,
-                        ),
-                      ),
-                      focusedBorder: UnderlineInputBorder(
-                        borderSide: BorderSide(
-                          color: Colors.deepPurple,
-                        ),
-                      ),
-                    ),
-                  ) : Container(),
-                ),
-                SizedBox(height: 8),
-                
-                // Theme
-                _buildSettingRow(
-                  "Dark Mode",
-                  Switch(
-                    value: Provider.of<AppState>(context).isDarkTheme,
-                    activeColor: Colors.deepPurple,
-                    activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
-                    onChanged: (value) {
-                      setState(() {
-                        // If current theme doesn't match desired value, toggle it
-                        if (Provider.of<AppState>(context, listen: false).isDarkTheme != value) {
-                          Provider.of<AppState>(context, listen: false).toggleTheme();
-                          _theme = value ? "Dark" : "Light";
-                        }
-                      });
-                      _checkForChanges();
-                    },
-                  ),
-                  Container(), // No input field for theme
-                ),
-                SizedBox(height: 8),
-                
-                // Sound Settings
-                _buildSettingRow(
-                  "Sound",
-                  Switch(
-                    value: _enableSound,
-                    activeColor: Colors.deepPurple,
-                    activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
-                    onChanged: (bool value) {
-                      setState(() {
-                        _enableSound = value;
-                      });
-                      _checkForChanges();
-                    },
-                  ),
-                  Container(), // No input field for sound
-                ),
-                SizedBox(height: 8),
-
-                // Vibration Settings
-                _buildSettingRow(
-                  "Vibration",
-                  Switch(
-                    value: _enableVibration,
-                    activeColor: Colors.deepPurple,
-                    activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
-                    onChanged: (bool value) {
-                      setState(() {
-                        _enableVibration = value;
-                        // Update the session's vibration setting directly
-                        final appState = Provider.of<AppState>(context, listen: false);
-                        appState.session = appState.session.copyWith(enableVibration: value);
-                      });
-                      _checkForChanges();
-                    },
-                  ),
-                  Container(), // No input field for vibration
-                ),
-                SizedBox(height: 16),
-                Divider(color: isDark ? Colors.white24 : Colors.black12),
-                
-                // Action buttons
-                SizedBox(height: 16),
-                Column(
+        body: Stack(
+          children: [
+            SingleChildScrollView(
+              padding: EdgeInsets.only(bottom: 100), // Add padding at bottom for buttons
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Match Duration
+                    _buildSettingRow(
+                      "Match Duration",
+                      Switch(
+                        value: _enableMatchDuration,
+                        activeColor: Colors.deepPurple,
+                        activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
+                        onChanged: (value) {
+                          setState(() {
+                            _enableMatchDuration = value;
+                          });
+                          _checkForChanges();
+                        },
+                      ),
+                      _enableMatchDuration ? TextField(
+                        controller: _matchDurationController,
+                        keyboardType: TextInputType.number,
+                        style: TextStyle(
+                          color: isDark ? Colors.white : Colors.black,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: "Minutes",
+                          labelStyle: TextStyle(
+                            color: isDark ? Colors.white60 : Colors.black54,
+                          ),
+                          enabledBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(
+                              color: isDark ? Colors.white30 : Colors.black26,
+                            ),
+                          ),
+                          focusedBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(
+                              color: Colors.deepPurple,
+                            ),
+                          ),
+                        ),
+                      ) : Container(),
+                    ),
+                    SizedBox(height: 8),
+                    
+                    // Match Segments - only visible when match duration is enabled
+                    _enableMatchDuration ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        // Label (left side)
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            "Match Segments",
+                            style: TextStyle(
+                              color: isDark ? Colors.white : Colors.black,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                        // Empty space where the switch would be
+                        SizedBox(width: 60),
+                        // Dropdown aligned with the minutes field
+                        Expanded(
+                          flex: 2,
+                          child: DropdownButton<String>(
+                            value: _matchSegments,
+                            isExpanded: true,
+                            dropdownColor: isDark ? Colors.grey[850] : Colors.white,
+                            style: TextStyle(
+                              color: isDark ? Colors.white : Colors.black,
+                            ),
+                            icon: Icon(
+                              Icons.arrow_drop_down,
+                              color: isDark ? Colors.white : Colors.black,
+                            ),
+                            underline: Container(
+                              height: 1,
+                              color: isDark ? Colors.white30 : Colors.black26,
+                            ),
+                            onChanged: (String? newValue) {
+                              if (newValue != null) {
+                                setState(() {
+                                  _matchSegments = newValue;
+                                });
+                                _checkForChanges();
+                              }
+                            },
+                            items: <String>['Halves', 'Quarters']
+                                .map<DropdownMenuItem<String>>((String value) {
+                              return DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(value),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ],
+                    ) : Container(),
+                    SizedBox(height: 8),
+                    
+                    // Target Play Duration
+                    _buildSettingRow(
+                      "Target Play\nDuration",
+                      Switch(
+                        value: _enableTargetDuration,
+                        activeColor: Colors.deepPurple,
+                        activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
+                        onChanged: (value) {
+                          setState(() {
+                            _enableTargetDuration = value;
+                          });
+                          _checkForChanges();
+                        },
+                      ),
+                      _enableTargetDuration ? TextField(
+                        controller: _targetDurationController,
+                        keyboardType: TextInputType.number,
+                        style: TextStyle(
+                          color: isDark ? Colors.white : Colors.black,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: "Minutes",
+                          labelStyle: TextStyle(
+                            color: isDark ? Colors.white60 : Colors.black54,
+                          ),
+                          enabledBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(
+                              color: isDark ? Colors.white30 : Colors.black26,
+                            ),
+                          ),
+                          focusedBorder: UnderlineInputBorder(
+                            borderSide: BorderSide(
+                              color: Colors.deepPurple,
+                            ),
+                          ),
+                        ),
+                      ) : Container(),
+                    ),
+                    SizedBox(height: 8),
+                    
+                    // Theme
+                    _buildSettingRow(
+                      "Dark Mode",
+                      Switch(
+                        value: Provider.of<AppState>(context).isDarkTheme,
+                        activeColor: Colors.deepPurple,
+                        activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
+                        onChanged: (value) {
+                          setState(() {
+                            // If current theme doesn't match desired value, toggle it
+                            if (Provider.of<AppState>(context, listen: false).isDarkTheme != value) {
+                              Provider.of<AppState>(context, listen: false).toggleTheme();
+                              _theme = value ? "Dark" : "Light";
+                            }
+                          });
+                          _checkForChanges();
+                        },
+                      ),
+                      Container(), // No input field for theme
+                    ),
+                    SizedBox(height: 8),
+                    
+                    // Sound Settings
+                    _buildSettingRow(
+                      "Sound",
+                      Switch(
+                        value: _enableSound,
+                        activeColor: Colors.deepPurple,
+                        activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
+                        onChanged: (bool value) {
+                          setState(() {
+                            _enableSound = value;
+                          });
+                          _checkForChanges();
+                        },
+                      ),
+                      Container(), // No input field for sound
+                    ),
+                    SizedBox(height: 8),
+
+                    // Vibration Settings
+                    _buildSettingRow(
+                      "Vibration",
+                      Switch(
+                        value: _enableVibration,
+                        activeColor: Colors.deepPurple,
+                        activeTrackColor: Colors.deepPurple.withValues(alpha: 128),
+                        onChanged: (bool value) {
+                          setState(() {
+                            _enableVibration = value;
+                            // Update the session's vibration setting directly
+                            final appState = Provider.of<AppState>(context, listen: false);
+                            appState.session = appState.session.copyWith(enableVibration: value);
+                          });
+                          _checkForChanges();
+                        },
+                      ),
+                      Container(), // No input field for vibration
+                    ),
+                    SizedBox(height: 16),
+                    Divider(color: isDark ? Colors.white24 : Colors.black12),
+                    
+                    // Match Log button
+                    SizedBox(height: 16),
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
@@ -402,104 +402,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ],
                 ),
-                
-                SizedBox(height: 24),
-                _buildActionButton(
-                  "Export Times to CSV",
-                  () {
-                    // Export logic using FileService
-                    final appState = Provider.of<AppState>(context, listen: false);
-                    if (appState.currentSessionPassword != null) {
-                      FileService().exportToCsv(
-                        appState.session, 
-                        appState.currentSessionPassword!
-                      ).then((filePath) {
-                        if (filePath != null) {
-                          // If it's a direct path (not a share)
-                          if (!filePath.startsWith('Shared as')) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text("CSV file saved to Downloads folder"),
-                                duration: Duration(seconds: 2),
-                                action: SnackBarAction(
-                                  label: 'Details',
-                                  onPressed: () {
-                                    showDialog(
-                                      context: context,
-                                      builder: (context) => AlertDialog(
-                                        title: Text('Export Successful'),
-                                        content: SingleChildScrollView(
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Text('Your file was saved to:'),
-                                              SizedBox(height: 8),
-                                              Container(
-                                                padding: EdgeInsets.all(8),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.grey.shade200,
-                                                  borderRadius: BorderRadius.circular(4),
-                                                ),
-                                                child: Text(
-                                                  filePath,
-                                                  style: TextStyle(
-                                                    fontFamily: 'monospace',
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () => Navigator.pop(context),
-                                            child: Text('OK'),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            );
-                          } else {
-                            // If it was shared (fallback method)
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text("CSV file exported. Please save it to Downloads folder")),
-                            );
-                          }
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text("CSV export failed")),
-                          );
-                        }
-                      }).catchError((error) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text("Error exporting CSV: $error")),
-                        );
-                      });
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text("No active session to export")),
-                      );
-                    }
-                  },
-                  isDark ? Colors.indigo[700]! : Colors.indigo,
+              ),
+            ),
+            // Fixed position Save Settings button at bottom
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: Offset(0, -4),
+                    ),
+                  ],
                 ),
-                
-                // Add visual separation for the Save Settings button
-                SizedBox(height: 32),
-                Divider(
-                  color: isDark ? Colors.white30 : Colors.black12,
-                  thickness: 1.5,
-                ),
-                SizedBox(height: 32),
-                
-                // Use a special button style for Save Settings
-                SizedBox(
-                  width: double.infinity,
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: SafeArea(
                   child: ElevatedButton(
                     onPressed: () {
                       // Save all settings
@@ -541,8 +463,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       });
                       
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text("Settings saved successfully"),
-                        duration: Duration(seconds: 1),
+                        SnackBar(
+                          content: Text("Settings saved successfully"),
+                          duration: Duration(seconds: 1),
                         ),
                       );
                       Navigator.pop(context);
@@ -555,6 +478,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         borderRadius: BorderRadius.circular(28),
                       ),
                       elevation: 3,
+                      minimumSize: Size(double.infinity, 60),
                     ),
                     child: Text(
                       "Save Settings",
@@ -566,9 +490,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -596,30 +520,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: input,
         ),
       ],
-    );
-  }
-  
-  Widget _buildActionButton(String text, VoidCallback onPressed, Color color) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: color,
-          foregroundColor: Colors.white,
-          padding: EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(28),
-          ),
-        ),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 16,
-            letterSpacing: 1.0,
-          ),
-        ),
-      ),
     );
   }
   

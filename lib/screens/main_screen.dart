@@ -243,12 +243,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       print('Loading initial state...');
       final appState = Provider.of<AppState>(context, listen: false);
       
-      // Ensure our UI displays the correct time
+      // First load the session to get the session name and other metadata
       _safeSetState(() {
-        _matchTime = appState.session.matchTime;
-        _matchTimeNotifier.value = _matchTime; // Update notifier as well
-        _isPaused = appState.session.isPaused;
-        
         // Determine the session name to display in the UI
         String nameToDisplay = '';
         
@@ -274,30 +270,56 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
         
         // Set the session name for display
         _sessionName = nameToDisplay;
-        
-        // If we have active players but a timestamp mismatch, update timestamps
-        if (appState.session.matchRunning && !appState.session.isPaused) {
-          // Update the session's lastUpdateTime to now to prevent jumps
-          appState.session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-        }
-        
-        // Start pulsing animation if there are no players
-        if (appState.players.isEmpty) {
-          _pulseController.repeat(reverse: true);
-        } else {
-          _pulseController.stop();
-        }
       });
+
+      // Now reset the session state
+      _safeSetState(() {
+        // Reset UI state
+        _isPaused = false;
+        _matchTime = 0;
+        _matchTimeNotifier.value = 0;
+        
+        // Reset all timer-related variables
+        _lastUpdateTimestamp = null;
+        _lastRealTimeCheck = null;
+        _initialStartTime = null;
+        _accumulatedDrift = 0;
+        _isUpdatingTime = false;
+      });
+      
+      // Reset app state
+      appState.resetSession();
       
       // Set initialized flag
       _isInitialized = true;
       
-      // Start timer only after state is updated
-      Future.microtask(() {
-        if (mounted && appState.session.matchRunning && !appState.session.isPaused) {
-          _startMatchTimer();
+      // Start pulsing animation if there are no players
+      if (appState.players.isEmpty) {
+        _pulseController.repeat(reverse: true);
+      } else {
+        _pulseController.stop();
+      }
+      
+      // Show a snackbar indicating fresh session start
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.refresh, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Session loaded and reset'),
+                ],
+              ),
+              duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.blue.shade700,
+            ),
+          );
         }
       });
+      
     } catch (e) {
       if (mounted) {
         _safeSetState(() {
@@ -1830,902 +1852,841 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       }
     });
     
-    // Ensure session name is always displayed - fix blank session name
-    if (_sessionName.isEmpty && appState.currentSessionPassword != null) {
-      // Don't call setState during build
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _safeSetState(() {
-          _sessionName = appState.currentSessionPassword ?? "Unnamed Session";
-          print('Fixed blank session name to: "$_sessionName"');
-        });
-      });
-    }
-    
-    // If app state isn't ready yet, show a loading screen
-    if (!_isInitialized) {
-      return Scaffold(
-        backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text(
-                'Loading session data...',
-                style: TextStyle(
-                  color: isDark ? Colors.white70 : Colors.black87,
+    return Scaffold(
+      backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
+      body: Stack(
+        children: [
+          // Add a semi-transparent overlay when paused
+          if (_isPaused && !appState.session.isMatchComplete)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  color: Colors.black.withOpacity(0.15), // Subtle dim effect
                 ),
               ),
-            ],
-          ),
-        ),
-      );
-    }
-    
-    // If there was an error loading the session, show a simple error screen
-    if (appState.currentSessionId == null) {
-      return Scaffold(
-        backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
-        appBar: AppBar(
-          title: Text('Session Error'),
-          backgroundColor: Colors.red,
-        ),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.error_outline,
-                  color: Colors.red,
-                  size: 48,
-                ),
-                SizedBox(height: 16),
-                Text(
-                  'There was an error loading the session',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : Colors.black,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'The session may be in read-only mode or the data might be corrupted',
-                  style: TextStyle(
-                    color: isDark ? Colors.white70 : Colors.black87,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                SizedBox(height: 32),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(context).pushReplacementNamed('/');
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    padding: EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                  ),
-                  child: Text('Return to Sessions'),
-                ),
-              ],
             ),
-          ),
-        ),
-      );
-    }
-    
-    // Wrap the build code in try-catch to make it more resilient
-    try {
-      return Scaffold(
-        backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
-        body: Stack(
-          children: [
-            // Add a semi-transparent overlay when paused
-            if (_isPaused && !appState.session.isMatchComplete)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: Container(
-                    color: Colors.black.withOpacity(0.15), // Subtle dim effect
+          
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
+              child: Column(
+                children: [
+                  // Status bar with player counts and match settings
+                  StatusBar(
+                    isDark: isDark,
+                    activePlayerCount: appState.session.players.values.where((p) => p.active).length,
+                    inactivePlayerCount: appState.session.players.values.where((p) => !p.active).length,
+                    teamGoals: appState.session.teamGoals,
+                    opponentGoals: appState.session.opponentGoals,
+                    isPaused: _isPaused,
+                    isMatchComplete: appState.session.isMatchComplete,
+                    isSetup: appState.session.isSetup,  // Add isSetup parameter
+                    enableTargetDuration: appState.session.enableTargetDuration,
+                    enableMatchDuration: appState.session.enableMatchDuration,
+                    targetPlayDuration: appState.session.targetPlayDuration,
+                    matchDuration: appState.session.matchDuration,
                   ),
-                ),
-              ),
-            
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
-                child: Column(
-                  children: [
-                    // Status bar with player counts and match settings
-                    StatusBar(
-                      isDark: isDark,
-                      activePlayerCount: appState.session.players.values.where((p) => p.active).length,
-                      inactivePlayerCount: appState.session.players.values.where((p) => !p.active).length,
-                      teamGoals: appState.session.teamGoals,
-                      opponentGoals: appState.session.opponentGoals,
-                      isPaused: _isPaused,
-                      isMatchComplete: appState.session.isMatchComplete,
-                      isSetup: appState.session.isSetup,  // Add isSetup parameter
-                      enableTargetDuration: appState.session.enableTargetDuration,
-                      enableMatchDuration: appState.session.enableMatchDuration,
-                      targetPlayDuration: appState.session.targetPlayDuration,
-                      matchDuration: appState.session.matchDuration,
-                    ),
-                    
-                    // Match Time container with pause indicator
-                    Container(
-                      padding: EdgeInsets.all(12),
-                      decoration: BoxDecoration(
+                  
+                  // Match Time container with pause indicator
+                  Container(
+                    padding: EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isDark
+                        // Dark theme colors (keep existing logic)
+                        ? (appState.session.isSetup
+                            ? Colors.blueGrey.shade900.withOpacity(0.5)
+                            : (appState.session.isMatchComplete
+                                ? Colors.red.shade900.withOpacity(0.5)
+                                : (_isPaused
+                                    ? Colors.orange.shade900.withOpacity(0.5)
+                                    : Colors.black38)))
+                        // Light theme: Use eggshell color
+                        : const Color(0xFFFAF0E6), // Eggshell color for light theme
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
                         color: isDark
-                          // Dark theme colors (keep existing logic)
+                          // Dark theme border colors (keep existing logic)
                           ? (appState.session.isSetup
-                              ? Colors.blueGrey.shade900.withOpacity(0.5)
+                              ? Colors.blueGrey.shade600
                               : (appState.session.isMatchComplete
-                                  ? Colors.red.shade900.withOpacity(0.5)
+                                  ? Colors.red.shade600
                                   : (_isPaused
-                                      ? Colors.orange.shade900.withOpacity(0.5)
-                                      : Colors.black38)))
-                          // Light theme: Use eggshell color
-                          : const Color(0xFFFAF0E6), // Eggshell color for light theme
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: isDark
-                            // Dark theme border colors (keep existing logic)
-                            ? (appState.session.isSetup
-                                ? Colors.blueGrey.shade600
-                                : (appState.session.isMatchComplete
-                                    ? Colors.red.shade600
-                                    : (_isPaused
-                                        ? Colors.orange.shade600
-                                        : Colors.grey.shade700)))
-                            // Light theme border colors (keep existing logic)
-                            : (appState.session.isSetup
-                                ? Colors.blueGrey.shade300
-                                : (appState.session.isMatchComplete
-                                    ? Colors.red.shade300
-                                    : (_isPaused
-                                        ? Colors.orange.shade300
-                                        : Colors.grey.shade400))),
-                          width: 1.5,
-                        ),
+                                      ? Colors.orange.shade600
+                                      : Colors.grey.shade700)))
+                          // Light theme border colors (keep existing logic)
+                          : (appState.session.isSetup
+                              ? Colors.blueGrey.shade300
+                              : (appState.session.isMatchComplete
+                                  ? Colors.red.shade300
+                                  : (_isPaused
+                                      ? Colors.orange.shade300
+                                      : Colors.grey.shade400))),
+                        width: 1.5,
                       ),
-                      child: Column(
-                        children: [
-                          // Session Name display
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 4.0),
-                            child: Text(
-                              _sessionName,
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.lightBlue,
-                                letterSpacing: 1.5,
-                              ),
+                    ),
+                    child: Column(
+                      children: [
+                        // Session Name display
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4.0),
+                          child: Text(
+                            _sessionName,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.lightBlue,
+                              letterSpacing: 1.5,
                             ),
                           ),
-                          if (appState.isReadOnlyMode)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 3.0),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.lock_outline,
-                                    size: 9,
+                        ),
+                        if (appState.isReadOnlyMode)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 3.0),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.lock_outline,
+                                  size: 9,
+                                  color: Colors.orange,
+                                ),
+                                SizedBox(width: 1),
+                                Text(
+                                  'Read-Only',
+                                  style: TextStyle(
+                                    fontSize: 8,
+                                    fontStyle: FontStyle.italic,
                                     color: Colors.orange,
                                   ),
-                                  SizedBox(width: 1),
-                                  Text(
-                                    'Read-Only',
-                                    style: TextStyle(
-                                      fontSize: 8,
-                                      fontStyle: FontStyle.italic,
-                                      color: Colors.orange,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          
-                          // Stack to separate timer centering and period positioning
-                          Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              // Center the match timer independently
-                              Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.only(top: 0, bottom: 0),
-                                  child: ValueListenableBuilder<int>(
-                                    valueListenable: _matchTimeNotifier,
-                                    builder: (context, time, child) {
-                                      return Text(
-                                        _formatTime(time),
-                                        style: TextStyle(
-                                          fontSize: 46,
-                                          fontWeight: FontWeight.bold,
-                                          fontFamily: 'RobotoMono',
-                                          color: appState.session.isSetup
-                                            ? Colors.blue  // Blue in setup mode
-                                            : (_isPaused 
-                                                ? Colors.orange.shade600  // Orange when paused
-                                                : (_hasActivePlayer() 
-                                                    ? Colors.green  // Green when running
-                                                    : Colors.red)),  // Red when stopped
-                                          letterSpacing: 2.0,
-                                        ),
-                                      );
-                                    },
-                                  ),
                                 ),
-                              ),
-                              // Position the period indicator to the right of the timer
-                              Positioned(
-                                left: MediaQuery.of(context).size.width / 2 + 64,
-                                top: 4,
-                                child: appState.session.enableMatchDuration ? Padding(
-                                  padding: EdgeInsets.all(6),
-                                  child: Container(
-                                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.lightBlue,
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                    child: Text(
-                                      appState.session.matchSegments == 2 
-                                        ? 'H${appState.session.currentPeriod}' 
-                                        : 'Q${appState.session.currentPeriod}',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ) : SizedBox.shrink(),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                          // Match duration progress bar
-                          if (appState.session.enableMatchDuration)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Container(
-                                height: 6,
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(4),
-                                  color: isDark ? Colors.black38 : Colors.grey.shade300,
-                                ),
-                                child: FractionallySizedBox(
-                                  alignment: Alignment.centerLeft,
-                                  widthFactor: ((_matchTime) / appState.session.matchDuration).clamp(0.0, 1.0),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(4),
-                                      gradient: LinearGradient(
-                                        colors: [Colors.lightBlueAccent, Colors.blueAccent],
-                                        begin: Alignment.centerLeft,
-                                        end: Alignment.centerRight,
+                        
+                        // Stack to separate timer centering and period positioning
+                        Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // Center the match timer independently
+                            Center(
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 0, bottom: 0),
+                                child: ValueListenableBuilder<int>(
+                                  valueListenable: _matchTimeNotifier,
+                                  builder: (context, time, child) {
+                                    return Text(
+                                      _formatTime(time),
+                                      style: TextStyle(
+                                        fontSize: 46,
+                                        fontWeight: FontWeight.bold,
+                                        fontFamily: 'RobotoMono',
+                                        color: appState.session.isSetup
+                                          ? Colors.blue  // Blue in setup mode
+                                          : (_isPaused 
+                                              ? Colors.orange.shade600  // Orange when paused
+                                              : (_hasActivePlayer() 
+                                                  ? Colors.green  // Green when running
+                                                  : Colors.red)),  // Red when stopped
+                                        letterSpacing: 2.0,
                                       ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                            // Position the period indicator to the right of the timer
+                            Positioned(
+                              left: MediaQuery.of(context).size.width / 2 + 64,
+                              top: 4,
+                              child: appState.session.enableMatchDuration ? Padding(
+                                padding: EdgeInsets.all(6),
+                                child: Container(
+                                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.lightBlue,
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: Text(
+                                    appState.session.matchSegments == 2 
+                                      ? 'H${appState.session.currentPeriod}' 
+                                      : 'Q${appState.session.currentPeriod}',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ) : SizedBox.shrink(),
+                            ),
+                          ],
+                        ),
+                        // Match duration progress bar
+                        if (appState.session.enableMatchDuration)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Container(
+                              height: 6,
+                              width: double.infinity,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(4),
+                                color: isDark ? Colors.black38 : Colors.grey.shade300,
+                              ),
+                              child: FractionallySizedBox(
+                                alignment: Alignment.centerLeft,
+                                widthFactor: ((_matchTime) / appState.session.matchDuration).clamp(0.0, 1.0),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(4),
+                                    gradient: LinearGradient(
+                                      colors: [Colors.lightBlueAccent, Colors.blueAccent],
+                                      begin: Alignment.centerLeft,
+                                      end: Alignment.centerRight,
                                     ),
                                   ),
                                 ),
                               ),
                             ),
-                        ],
-                      ),
+                          ),
+                      ],
                     ),
-                    
-                    // Container for both player buttons and table
-                    Expanded(
-                      child: Column(
-                        children: [
-                          // Player buttons pane
-                          Expanded(
-                            flex: 2,
-                            child: Container(
-                              margin: EdgeInsets.only(bottom: 4),
-                              decoration: BoxDecoration(
-                                color: isDark 
-                                  ? Colors.black.withOpacity(0.3) 
-                                  : Colors.white.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: isDark ? Colors.white12 : Colors.black12,
-                                  width: 1,
-                                ),
+                  ),
+                  
+                  // Container for both player buttons and table
+                  Expanded(
+                    child: Column(
+                      children: [
+                        // Player buttons pane
+                        Expanded(
+                          flex: 2,
+                          child: Container(
+                            margin: EdgeInsets.only(bottom: 4),
+                            decoration: BoxDecoration(
+                              color: isDark 
+                                ? Colors.black.withOpacity(0.3) 
+                                : Colors.white.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: isDark ? Colors.white12 : Colors.black12,
+                                width: 1,
                               ),
-                              child: appState.players.isEmpty
-                                ? Center(
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: const [
-                                        Icon(
-                                          Icons.people_outline,
-                                          size: 48,
+                            ),
+                            child: appState.players.isEmpty
+                              ? Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: const [
+                                      Icon(
+                                        Icons.people_outline,
+                                        size: 48,
+                                        color: Colors.white54,
+                                      ),
+                                      SizedBox(height: 16),
+                                      Text(
+                                        'No Players Added',
+                                        style: TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
                                           color: Colors.white54,
                                         ),
-                                        SizedBox(height: 16),
-                                        Text(
-                                          'No Players Added',
-                                          style: TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white54,
-                                          ),
+                                      ),
+                                      SizedBox(height: 8),
+                                      Text(
+                                        'Tap the + button to add players',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontStyle: FontStyle.italic,
+                                          color: Colors.white38,
                                         ),
-                                        SizedBox(height: 8),
-                                        Text(
-                                          'Tap the + button to add players',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontStyle: FontStyle.italic,
-                                            color: Colors.white38,
-                                          ),
-                                        ),
-                                      ],
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : ListView.builder(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                  itemCount: appState.players.length,
+                                  addAutomaticKeepAlives: false,
+                                  addRepaintBoundaries: true,
+                                  cacheExtent: 500,
+                                  itemBuilder: (context, index) {
+                                    final player = appState.players[index];
+                                    final playerName = player['name'] as String;
+                                    final playerId = player['id'].toString();
+                                    final playerObj = appState.session.players[playerName];
+                                    final isActive = playerObj?.active ?? false;
+                                    final playerTime = _calculatePlayerTime(playerObj);
+                                    
+                                    return PlayerListItem(
+                                      playerName: playerName,
+                                      playerId: playerId,
+                                      isActive: isActive,
+                                      playerTime: playerTime,
+                                      isPaused: _isPaused,
+                                      isSetup: appState.session.isSetup,
+                                      wasActiveDuringPause: appState.session.activeBeforePause.contains(playerName),
+                                      isDark: isDark,
+                                      targetPlayDuration: appState.session.enableTargetDuration ? appState.session.targetPlayDuration : 0,
+                                      goals: playerObj?.goals,
+                                      isReadOnlyMode: appState.isReadOnlyMode,
+                                      onToggle: _togglePlayerByName,
+                                      onLongPress: _showPlayerActionsDialog,
+                                    );
+                                  },
+                                ),
+                          ),
+                        ),
+                        
+                        // Table header with toggle button
+                        GestureDetector(
+                          onTap: _toggleTableExpansion,
+                          child: Container(
+                            padding: EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.black, // Match the dark header from the image
+                              borderRadius: BorderRadius.only(
+                                topLeft: Radius.circular(8),
+                                topRight: Radius.circular(8),
+                                bottomLeft: _isTableExpanded ? Radius.zero : Radius.circular(8),
+                                bottomRight: _isTableExpanded ? Radius.zero : Radius.circular(8),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                // Player header - left aligned
+                                Expanded(
+                                  flex: 2,
+                                  child: Text(
+                                    'Player',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.grey,
+                                      fontSize: 12,
+                                      letterSpacing: 1.0,
                                     ),
-                                  )
-                                : ListView.builder(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                                    itemCount: appState.players.length,
-                                    addAutomaticKeepAlives: false,
-                                    addRepaintBoundaries: true,
-                                    cacheExtent: 500,
-                                    itemBuilder: (context, index) {
-                                      final player = appState.players[index];
-                                      final playerName = player['name'] as String;
-                                      final playerId = player['id'].toString();
+                                  ),
+                                ),
+                                // Time header - right aligned
+                                Expanded(
+                                  flex: 1,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        'Time',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.grey,
+                                          fontSize: 12,
+                                          letterSpacing: 1.0,
+                                        ),
+                                      ),
+                                      // Chevron icon
+                                      Icon(
+                                        _isTableExpanded 
+                                          ? Icons.keyboard_arrow_down
+                                          : Icons.keyboard_arrow_up,
+                                        color: Colors.white,
+                                        size: 13,
+                                        weight: 10,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        
+                        // Player table pane (collapsible)
+                        AnimatedContainer(
+                          duration: Duration(milliseconds: 300),
+                          height: _isTableExpanded ? 150 : 0,
+                          margin: EdgeInsets.only(bottom: 4),
+                          decoration: BoxDecoration(
+                            color: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+                            borderRadius: BorderRadius.only(
+                              bottomLeft: Radius.circular(8),
+                              bottomRight: Radius.circular(8),
+                            ),
+                          ),
+                          child: _isTableExpanded 
+                            ? SingleChildScrollView(
+                                child: Builder(
+                                  builder: (context) {
+                                    // Get all players with their times
+                                    List<Map<String, dynamic>> sortedPlayers = [];
+                                    
+                                    // Handle empty player list case
+                                    if (appState.players.isEmpty) {
+                                      return Center(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(8.0),
+                                          child: Text(
+                                            'No players yet',
+                                            style: TextStyle(
+                                              color: isDark ? Colors.white70 : Colors.black54,
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    
+                                    // Create the sorted players list
+                                    sortedPlayers = appState.players.map((player) {
+                                      final playerName = player['name'];
                                       final playerObj = appState.session.players[playerName];
                                       final isActive = playerObj?.active ?? false;
                                       final playerTime = _calculatePlayerTime(playerObj);
+                                      final index = appState.players.indexOf(player);
                                       
-                                      return PlayerListItem(
-                                        playerName: playerName,
-                                        playerId: playerId,
-                                        isActive: isActive,
-                                        playerTime: playerTime,
-                                        isPaused: _isPaused,
-                                        isSetup: appState.session.isSetup,
-                                        wasActiveDuringPause: appState.session.activeBeforePause.contains(playerName),
-                                        isDark: isDark,
-                                        targetPlayDuration: appState.session.enableTargetDuration ? appState.session.targetPlayDuration : 0,
-                                        goals: playerObj?.goals,
-                                        isReadOnlyMode: appState.isReadOnlyMode,
-                                        onToggle: _togglePlayerByName,
-                                        onLongPress: _showPlayerActionsDialog,
-                                      );
-                                    },
-                                  ),
-                            ),
-                          ),
-                          
-                          // Table header with toggle button
-                          GestureDetector(
-                            onTap: _toggleTableExpansion,
-                            child: Container(
-                              padding: EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                              decoration: BoxDecoration(
-                                color: Colors.black, // Match the dark header from the image
-                                borderRadius: BorderRadius.only(
-                                  topLeft: Radius.circular(8),
-                                  topRight: Radius.circular(8),
-                                  bottomLeft: _isTableExpanded ? Radius.zero : Radius.circular(8),
-                                  bottomRight: _isTableExpanded ? Radius.zero : Radius.circular(8),
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  // Player header - left aligned
-                                  Expanded(
-                                    flex: 2,
-                                    child: Text(
-                                      'Player',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.grey,
-                                        fontSize: 12,
-                                        letterSpacing: 1.0,
-                                      ),
-                                    ),
-                                  ),
-                                  // Time header - right aligned
-                                  Expanded(
-                                    flex: 1,
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(
-                                          'Time',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.grey,
-                                            fontSize: 12,
-                                            letterSpacing: 1.0,
+                                      return {
+                                        'player': player,
+                                        'name': playerName as String,
+                                        'time': playerTime,
+                                        'active': isActive,
+                                        'index': index,
+                                      };
+                                    }).toList();
+                                    
+                                    // Sort by time descending
+                                    sortedPlayers.sort((a, b) => (b['time'] as int).compareTo(a['time'] as int));
+                                    
+                                    // Use ListView instead of Table for more reliable rendering
+                                    return ListView.builder(
+                                      shrinkWrap: true,
+                                      physics: NeverScrollableScrollPhysics(), // Disable scrolling as we're in a SingleChildScrollView
+                                      itemCount: sortedPlayers.length,
+                                      itemBuilder: (context, i) {
+                                        final item = sortedPlayers[i];
+                                        final playerName = item['name'] as String;
+                                        final playerTime = item['time'] as int;
+                                        final isActive = item['active'] as bool;
+                                        final player = item['player'] as Map<String, dynamic>;
+                                        final playerId = player['id'];
+                                        
+                                        // Create a stable key
+                                        final stableKey = ValueKey('table-${playerId ?? playerName}');
+                                        
+                                        // Use simplified widget structure
+                                        return Container(
+                                          key: stableKey,
+                                          decoration: BoxDecoration(
+                                            color: isActive
+                                                ? (isDark ? AppThemes.darkGreen.withOpacity(0.7) : AppThemes.lightGreen.withOpacity(0.7)) // Using withOpacity temporarily
+                                                : (isDark ? AppThemes.darkRed.withOpacity(0.7) : AppThemes.lightRed.withOpacity(0.7)), // Using withOpacity temporarily
+                                            border: playerTime >= appState.session.targetPlayDuration
+                                                ? Border.all(
+                                                    color: Colors.amber.shade200.withOpacity(0.5), // Using withOpacity temporarily
+                                                    width: 1.0,
+                                                  )
+                                                : null,
                                           ),
-                                        ),
-                                        // Chevron icon
-                                        Icon(
-                                          _isTableExpanded 
-                                            ? Icons.keyboard_arrow_down
-                                            : Icons.keyboard_arrow_up,
-                                          color: Colors.white,
-                                          size: 13,
-                                          weight: 10,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          
-                          // Player table pane (collapsible)
-                          AnimatedContainer(
-                            duration: Duration(milliseconds: 300),
-                            height: _isTableExpanded ? 150 : 0,
-                            margin: EdgeInsets.only(bottom: 4),
-                            decoration: BoxDecoration(
-                              color: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
-                              borderRadius: BorderRadius.only(
-                                bottomLeft: Radius.circular(8),
-                                bottomRight: Radius.circular(8),
-                              ),
-                            ),
-                            child: _isTableExpanded 
-                              ? SingleChildScrollView(
-                                  child: Builder(
-                                    builder: (context) {
-                                      // Get all players with their times
-                                      List<Map<String, dynamic>> sortedPlayers = [];
-                                      
-                                      // Handle empty player list case
-                                      if (appState.players.isEmpty) {
-                                        return Center(
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(8.0),
-                                            child: Text(
-                                              'No players yet',
-                                              style: TextStyle(
-                                                color: isDark ? Colors.white70 : Colors.black54,
+                                          padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 4.0),
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                flex: 2,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 2.0),
+                                                  child: Text(
+                                                    playerName,
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ),
                                               ),
-                                            ),
+                                              Expanded(
+                                                flex: 1,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 2.0),
+                                                  child: Text(
+                                                    _formatTime(playerTime),
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         );
-                                      }
-                                      
-                                      // Create the sorted players list
-                                      sortedPlayers = appState.players.map((player) {
-                                        final playerName = player['name'];
-                                        final playerObj = appState.session.players[playerName];
-                                        final isActive = playerObj?.active ?? false;
-                                        final playerTime = _calculatePlayerTime(playerObj);
-                                        final index = appState.players.indexOf(player);
-                                        
-                                        return {
-                                          'player': player,
-                                          'name': playerName as String,
-                                          'time': playerTime,
-                                          'active': isActive,
-                                          'index': index,
-                                        };
-                                      }).toList();
-                                      
-                                      // Sort by time descending
-                                      sortedPlayers.sort((a, b) => (b['time'] as int).compareTo(a['time'] as int));
-                                      
-                                      // Use ListView instead of Table for more reliable rendering
-                                      return ListView.builder(
-                                        shrinkWrap: true,
-                                        physics: NeverScrollableScrollPhysics(), // Disable scrolling as we're in a SingleChildScrollView
-                                        itemCount: sortedPlayers.length,
-                                        itemBuilder: (context, i) {
-                                          final item = sortedPlayers[i];
-                                          final playerName = item['name'] as String;
-                                          final playerTime = item['time'] as int;
-                                          final isActive = item['active'] as bool;
-                                          final player = item['player'] as Map<String, dynamic>;
-                                          final playerId = player['id'];
-                                          
-                                          // Create a stable key
-                                          final stableKey = ValueKey('table-${playerId ?? playerName}');
-                                          
-                                          // Use simplified widget structure
-                                          return Container(
-                                            key: stableKey,
-                                            decoration: BoxDecoration(
-                                              color: isActive
-                                                  ? (isDark ? AppThemes.darkGreen.withOpacity(0.7) : AppThemes.lightGreen.withOpacity(0.7)) // Using withOpacity temporarily
-                                                  : (isDark ? AppThemes.darkRed.withOpacity(0.7) : AppThemes.lightRed.withOpacity(0.7)), // Using withOpacity temporarily
-                                              border: playerTime >= appState.session.targetPlayDuration
-                                                  ? Border.all(
-                                                      color: Colors.amber.shade200.withOpacity(0.5), // Using withOpacity temporarily
-                                                      width: 1.0,
-                                                    )
-                                                  : null,
-                                            ),
-                                            padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 4.0),
-                                            child: Row(
-                                              children: [
-                                                Expanded(
-                                                  flex: 2,
-                                                  child: Padding(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 2.0),
-                                                    child: Text(
-                                                      playerName,
-                                                      style: TextStyle(
-                                                        color: Colors.white,
-                                                        fontWeight: FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                                Expanded(
-                                                  flex: 1,
-                                                  child: Padding(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 2.0),
-                                                    child: Text(
-                                                      _formatTime(playerTime),
-                                                      style: TextStyle(
-                                                        color: Colors.white,
-                                                        fontWeight: FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          );
-                                        },
-                                      );
-                                    }
-                                  ),
-                                )
-                              : SizedBox.shrink(),
-                          ),
-                        ],
-                      ),
+                                      },
+                                    );
+                                  }
+                                ),
+                              )
+                            : SizedBox.shrink(),
+                        ),
+                      ],
                     ),
-                    
-                    // Action buttons in 2x2 grid with soccer ball
-                    Container(
-                      height: 120, // Fixed height for button container
-                      child: Stack(
-                         alignment: Alignment.center,
-                         children: [
-                           // Bottom action buttons with space for soccer ball
-                           Column(
-                             mainAxisAlignment: MainAxisAlignment.end, // Changed from spaceBetween to end
-                             children: [
-                               // Top row buttons
-                               Row(
-                                 children: [
-                                   // Pause button
-                                   Expanded(
-                                     child: Padding(
-                                       padding: const EdgeInsets.only(right: 2, bottom: 4), // Added bottom padding
-                                       child: ElevatedButton(
-                                         onPressed: _pauseAll,
-                                         style: ElevatedButton.styleFrom(
-                                           backgroundColor: appState.session.isSetup
-                                             ? Colors.blue.shade600
-                                             : (_isPaused 
-                                                 ? Colors.green.shade600
-                                                 : (isDark ? AppThemes.darkPauseButton : AppThemes.lightPauseButton)),
-                                           padding: EdgeInsets.symmetric(vertical: 12),
-                                           foregroundColor: Colors.white,
-                                           textStyle: TextStyle(
-                                             fontWeight: FontWeight.bold,
-                                             fontSize: _isPaused ? 16 : 15,
-                                             letterSpacing: 2.0,
+                  ),
+                  
+                  // Action buttons in 2x2 grid with soccer ball
+                  Container(
+                    height: 120, // Fixed height for button container
+                    child: Stack(
+                       alignment: Alignment.center,
+                       children: [
+                         // Bottom action buttons with space for soccer ball
+                         Column(
+                           mainAxisAlignment: MainAxisAlignment.end, // Changed from spaceBetween to end
+                           children: [
+                             // Top row buttons
+                             Row(
+                               children: [
+                                 // Pause button
+                                 Expanded(
+                                   child: Padding(
+                                     padding: const EdgeInsets.only(right: 2, bottom: 4), // Added bottom padding
+                                     child: ElevatedButton(
+                                       onPressed: _pauseAll,
+                                       style: ElevatedButton.styleFrom(
+                                         backgroundColor: appState.session.isSetup
+                                           ? Colors.blue.shade600
+                                           : (_isPaused 
+                                               ? Colors.green.shade600
+                                               : (isDark ? AppThemes.darkPauseButton : AppThemes.lightPauseButton)),
+                                         padding: EdgeInsets.symmetric(vertical: 12),
+                                         foregroundColor: Colors.white,
+                                         textStyle: TextStyle(
+                                           fontWeight: FontWeight.bold,
+                                           fontSize: _isPaused ? 16 : 15,
+                                           letterSpacing: 2.0,
+                                         ),
+                                         elevation: _isPaused ? 8 : 2,
+                                         shadowColor: _isPaused ? Colors.green.shade900 : Colors.black38,
+                                       ),
+                                       child: Row(
+                                         mainAxisAlignment: MainAxisAlignment.center,
+                                         children: [
+                                           Icon(
+                                             appState.session.isSetup
+                                               ? Icons.play_arrow
+                                               : (_isPaused ? Icons.play_circle : Icons.pause_circle),
+                                             size: 20
                                            ),
-                                           elevation: _isPaused ? 8 : 2,
-                                           shadowColor: _isPaused ? Colors.green.shade900 : Colors.black38,
-                                         ),
-                                         child: Row(
-                                           mainAxisAlignment: MainAxisAlignment.center,
-                                           children: [
-                                             Icon(
-                                               appState.session.isSetup
-                                                 ? Icons.play_arrow
-                                                 : (_isPaused ? Icons.play_circle : Icons.pause_circle),
-                                               size: 20
-                                             ),
-                                             SizedBox(width: 8),
-                                             Text(
-                                               appState.session.isSetup
-                                                 ? 'Start Match'
-                                                 : (_isPaused ? 'Resume' : 'Pause')
-                                             ),
-                                           ],
-                                         ),
+                                           SizedBox(width: 8),
+                                           Text(
+                                             appState.session.isSetup
+                                               ? 'Start Match'
+                                               : (_isPaused ? 'Resume' : 'Pause')
+                                           ),
+                                         ],
                                        ),
                                      ),
                                    ),
-                                   // Settings button
-                                   Expanded(
-                                     child: Padding(
-                                       padding: const EdgeInsets.only(left: 2, bottom: 4), // Added bottom padding
-                                       child: ElevatedButton(
-                                         onPressed: () {
-                                           Navigator.push(
-                                             context,
-                                             MaterialPageRoute(builder: (context) => SettingsScreen()),
-                                           );
-                                         },
-                                         style: ElevatedButton.styleFrom(
-                                           backgroundColor: isDark ? AppThemes.darkSettingsButton : AppThemes.lightSettingsButton,
-                                           padding: EdgeInsets.symmetric(vertical: 12),
-                                           foregroundColor: Colors.white,
-                                           textStyle: TextStyle(
-                                             fontWeight: FontWeight.bold,
-                                             fontSize: 15,
-                                             letterSpacing: 2.0,
-                                           ),
-                                         ),
-                                         child: Text('Settings'),
-                                       ),
-                                     ),
-                                   ),
-                                 ],
-                               ),
-                               // Reset button with confirmation
-                               Row(
-                                 children: [
-                                   Expanded(
-                                     child: Padding(
-                                       padding: const EdgeInsets.only(right: 2, bottom: 4), // Added bottom padding
-                                       child: ElevatedButton(
-                                         onPressed: () async {
-                                           // Add vibration pattern with the same intensity as the pause button
-                                           // Use pattern for double vibration effect
-                                           await _hapticService.resetButton(context);
-                                           
-                                           showDialog(
-                                             context: context,
-                                             builder: (BuildContext context) {
-                                               return AlertDialog(
-                                                 title: Text(
-                                                   'Reset Match',
-                                                   style: TextStyle(
-                                                     fontSize: 20,
-                                                     fontWeight: FontWeight.bold,
-                                                     color: isDark ? AppThemes.darkText : AppThemes.lightText,
-                                                     letterSpacing: 0.5,
-                                                   ),
-                                                 ),
-                                                 content: Text('Are you sure you want to reset all timers?'),
-                                                 actions: [
-                                                   TextButton(
-                                                     child: Text('Cancel'),
-                                                     onPressed: () {
-                                                       Navigator.of(context).pop();
-                                                     },
-                                                   ),
-                                                   TextButton(
-                                                     child: Text('Reset'),
-                                                     onPressed: () {
-                                                       Navigator.of(context).pop();
-                                                       _resetAll();
-                                                     },
-                                                   ),
-                                                 ],
-                                               );
-                                             },
-                                           );
-                                         },
-                                         style: ElevatedButton.styleFrom(
-                                           backgroundColor: isDark ? AppThemes.darkExitButton : AppThemes.lightExitButton,
-                                           padding: EdgeInsets.symmetric(vertical: 12),
-                                           foregroundColor: Colors.white,
-                                           textStyle: TextStyle(
-                                             fontWeight: FontWeight.bold,
-                                             fontSize: 15,
-                                             letterSpacing: 2.0,
-                                           ),
-                                         ),
-                                         child: Text('Reset'),
-                                       ),
-                                     ),
-                                   ),
-                                   // Exit button
-                                   Expanded(
-                                     child: Padding(
-                                       padding: const EdgeInsets.only(left: 2, bottom: 4), // Added bottom padding
-                                       child: ElevatedButton(
-                                         onPressed: () {
-                                           showDialog(
-                                             context: context,
-                                             builder: (BuildContext context) {
-                                               return AlertDialog(
-                                                 title: Text(
-                                                   'Exit Match',
-                                                   style: TextStyle(
-                                                     fontSize: 20,
-                                                     fontWeight: FontWeight.bold,
-                                                     color: isDark ? AppThemes.darkText : AppThemes.lightText,
-                                                     letterSpacing: 0.5,
-                                                   ),
-                                                 ),
-                                                 content: Text('Are you sure you want to exit this match?'),
-                                                 actions: [
-                                                   TextButton(
-                                                     child: Text('Cancel'),
-                                                     onPressed: () {
-                                                       Navigator.of(context).pop();
-                                                     },
-                                                   ),
-                                                   TextButton(
-                                                     child: Text('Exit'),
-                                                     onPressed: () {
-                                                       Provider.of<AppState>(context, listen: false).clearCurrentSession();
-                                                       Navigator.of(context).pop();
-                                                       Navigator.of(context).pushReplacementNamed('/');
-                                                     },
-                                                   ),
-                                                 ],
-                                               );
-                                             },
-                                           );
-                                         },
-                                         style: ElevatedButton.styleFrom(
-                                           backgroundColor: Colors.red.shade700,
-                                           padding: EdgeInsets.symmetric(vertical: 12),
-                                           foregroundColor: Colors.white,
-                                           textStyle: TextStyle(
-                                             fontWeight: FontWeight.bold,
-                                             fontSize: 15,
-                                             letterSpacing: 2.0,
-                                           ),
-                                         ),
-                                         child: Text('Exit'),
-                                       ),
-                                     ),
-                                   ),
-                                 ],
-                               ),
-                             ],
-                           ),
-                           // Centered soccer ball button
-                           Center(
-                             child: GestureDetector(
-                               onTap: () => _showActionSelectionDialog(context),
-                               child: Container(
-                                 width: 50,
-                                 height: 50,
-                                 decoration: BoxDecoration(
-                                   shape: BoxShape.circle,
-                                   color: isDark ? Colors.grey[800] : Colors.white,
-                                   boxShadow: [
-                                     BoxShadow(
-                                       color: Colors.blue.withOpacity(0.3),
-                                       spreadRadius: 5,
-                                       blurRadius: 15,
-                                       offset: Offset(0, 0),
-                                     ),
-                                     BoxShadow(
-                                       color: Colors.white.withOpacity(0.2),
-                                       spreadRadius: 2,
-                                       blurRadius: 8,
-                                       offset: Offset(0, 0),
-                                     ),
-                                     BoxShadow(
-                                       color: Colors.black.withOpacity(0.2),
-                                       spreadRadius: 2,
-                                       blurRadius: 8,
-                                       offset: Offset(0, 2),
-                                     ),
-                                   ],
                                  ),
-                                 child: Center(
-                                   child: SvgPicture.asset(
-                                     'assets/images/soccerball.svg',
-                                     width: 46,
-                                     height: 46,
+                                 // Settings button
+                                 Expanded(
+                                   child: Padding(
+                                     padding: const EdgeInsets.only(left: 2, bottom: 4), // Added bottom padding
+                                     child: ElevatedButton(
+                                       onPressed: () {
+                                         Navigator.push(
+                                           context,
+                                           MaterialPageRoute(builder: (context) => SettingsScreen()),
+                                         );
+                                       },
+                                       style: ElevatedButton.styleFrom(
+                                         backgroundColor: isDark ? AppThemes.darkSettingsButton : AppThemes.lightSettingsButton,
+                                         padding: EdgeInsets.symmetric(vertical: 12),
+                                         foregroundColor: Colors.white,
+                                         textStyle: TextStyle(
+                                           fontWeight: FontWeight.bold,
+                                           fontSize: 15,
+                                           letterSpacing: 2.0,
+                                         ),
+                                       ),
+                                       child: Text('Settings'),
+                                     ),
                                    ),
+                                 ),
+                               ],
+                             ),
+                             // Reset button with confirmation
+                             Row(
+                               children: [
+                                 Expanded(
+                                   child: Padding(
+                                     padding: const EdgeInsets.only(right: 2, bottom: 4), // Added bottom padding
+                                     child: ElevatedButton(
+                                       onPressed: () async {
+                                         // Add vibration pattern with the same intensity as the pause button
+                                         // Use pattern for double vibration effect
+                                         await _hapticService.resetButton(context);
+                                         
+                                         showDialog(
+                                           context: context,
+                                           builder: (BuildContext context) {
+                                             return AlertDialog(
+                                               title: Text(
+                                                 'Reset Match',
+                                                 style: TextStyle(
+                                                   fontSize: 20,
+                                                   fontWeight: FontWeight.bold,
+                                                   color: isDark ? AppThemes.darkText : AppThemes.lightText,
+                                                   letterSpacing: 0.5,
+                                                 ),
+                                               ),
+                                               content: Text('Are you sure you want to reset all timers?'),
+                                               actions: [
+                                                 TextButton(
+                                                   child: Text('Cancel'),
+                                                   onPressed: () {
+                                                     Navigator.of(context).pop();
+                                                   },
+                                                 ),
+                                                 TextButton(
+                                                   child: Text('Reset'),
+                                                   onPressed: () {
+                                                     Navigator.of(context).pop();
+                                                     _resetAll();
+                                                   },
+                                                 ),
+                                               ],
+                                             );
+                                           },
+                                         );
+                                       },
+                                       style: ElevatedButton.styleFrom(
+                                         backgroundColor: isDark ? AppThemes.darkExitButton : AppThemes.lightExitButton,
+                                         padding: EdgeInsets.symmetric(vertical: 12),
+                                         foregroundColor: Colors.white,
+                                         textStyle: TextStyle(
+                                           fontWeight: FontWeight.bold,
+                                           fontSize: 15,
+                                           letterSpacing: 2.0,
+                                         ),
+                                       ),
+                                       child: Text('Reset'),
+                                     ),
+                                   ),
+                                 ),
+                                 // Exit button
+                                 Expanded(
+                                   child: Padding(
+                                     padding: const EdgeInsets.only(left: 2, bottom: 4), // Added bottom padding
+                                     child: ElevatedButton(
+                                       onPressed: () {
+                                         showDialog(
+                                           context: context,
+                                           builder: (BuildContext context) {
+                                             return AlertDialog(
+                                               title: Text(
+                                                 'Exit Match',
+                                                 style: TextStyle(
+                                                   fontSize: 20,
+                                                   fontWeight: FontWeight.bold,
+                                                   color: isDark ? AppThemes.darkText : AppThemes.lightText,
+                                                   letterSpacing: 0.5,
+                                                 ),
+                                               ),
+                                               content: Text('Are you sure you want to exit this match?'),
+                                               actions: [
+                                                 TextButton(
+                                                   child: Text('Cancel'),
+                                                   onPressed: () {
+                                                     Navigator.of(context).pop();
+                                                   },
+                                                 ),
+                                                 TextButton(
+                                                   child: Text('Exit'),
+                                                   onPressed: () {
+                                                     Provider.of<AppState>(context, listen: false).clearCurrentSession();
+                                                     Navigator.of(context).pop();
+                                                     Navigator.of(context).pushReplacementNamed('/');
+                                                   },
+                                                 ),
+                                               ],
+                                             );
+                                           },
+                                         );
+                                       },
+                                       style: ElevatedButton.styleFrom(
+                                         backgroundColor: Colors.red.shade700,
+                                         padding: EdgeInsets.symmetric(vertical: 12),
+                                         foregroundColor: Colors.white,
+                                         textStyle: TextStyle(
+                                           fontWeight: FontWeight.bold,
+                                           fontSize: 15,
+                                           letterSpacing: 2.0,
+                                         ),
+                                       ),
+                                       child: Text('Exit'),
+                                     ),
+                                   ),
+                                 ),
+                               ],
+                             ),
+                           ],
+                         ),
+                         // Centered soccer ball button
+                         Center(
+                           child: GestureDetector(
+                             onTap: () => _showActionSelectionDialog(context),
+                             child: Container(
+                               width: 50,
+                               height: 50,
+                               decoration: BoxDecoration(
+                                 shape: BoxShape.circle,
+                                 color: isDark ? Colors.grey[800] : Colors.white,
+                                 boxShadow: [
+                                   BoxShadow(
+                                     color: Colors.blue.withOpacity(0.3),
+                                     spreadRadius: 5,
+                                     blurRadius: 15,
+                                     offset: Offset(0, 0),
+                                   ),
+                                   BoxShadow(
+                                     color: Colors.white.withOpacity(0.2),
+                                     spreadRadius: 2,
+                                     blurRadius: 8,
+                                     offset: Offset(0, 0),
+                                   ),
+                                   BoxShadow(
+                                     color: Colors.black.withOpacity(0.2),
+                                     spreadRadius: 2,
+                                     blurRadius: 8,
+                                     offset: Offset(0, 2),
+                                   ),
+                                 ],
+                               ),
+                               child: Center(
+                                 child: SvgPicture.asset(
+                                   'assets/images/soccerball.svg',
+                                   width: 46,
+                                   height: 46,
                                  ),
                                ),
                              ),
                            ),
-                         ],
-                       ),
+                         ),
+                       ],
                      ),
-                  ],
-                ),
+                   ),
+                ],
               ),
             ),
-          ],
-        ),
-        
-        floatingActionButton: Stack(
-          alignment: Alignment.topRight,
-          children: [
-            // Hint text for empty player list
-            if (appState.players.isEmpty)
-              Positioned(
-                top: 85,  // Adjusted down from 45
-                right: 0,
-                child: Container(
-                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.7),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    'Add Players',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
+          ),
+          
+          // Whistle button
+          if (appState.session.enableSound)  // Only show button if sound is enabled
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 40,  // Match add player button height
+              left: 16,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () {
+                    _audioService.playWhistle();
+                    _hapticService.periodEnd(context);
+                  },
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    width: 37,
+                    height: 37,
+                    decoration: BoxDecoration(
+                      color: Color(0xFF555555).withOpacity(0.8),
+                      shape: BoxShape.circle,
                     ),
-                  ),
-                ),
-              ),
-              
-            // The FAB with pulse animation
-            Positioned(  // Added Positioned widget to control exact placement
-              top: 40,  // Position it 40 pixels from the top
-              right: 0,  // Keep it aligned to the right
-              child: AnimatedBuilder(
-                animation: _pulseAnimation,
-                builder: (context, child) {
-                  // Only pulse if there are no players
-                  final shouldPulse = appState.players.isEmpty;
-                  final scale = shouldPulse ? _pulseAnimation.value : 1.0;
-                  
-                  return Transform.scale(
-                    scale: scale,
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () => _showAddPlayerDialog(context),
-                        borderRadius: BorderRadius.circular(18),
-                        child: Container(
-                          width: 37,
-                          height: 37,
-                          decoration: BoxDecoration(
-                            color: shouldPulse 
-                                ? Colors.amber.withOpacity(0.9)
-                                : Color(0xFF555555).withOpacity(0.8),
-                            shape: BoxShape.circle,
-                            boxShadow: shouldPulse ? [
-                              BoxShadow(
-                                color: Colors.amber.withOpacity(0.6),
-                                blurRadius: 10,
-                                spreadRadius: 2,
-                              )
-                            ] : null,
-                          ),
-                          child: Icon(
-                            Icons.add,
-                            color: Colors.white,
-                            size: 23,
-                          ),
+                    child: Padding(
+                      padding: EdgeInsets.all(8),
+                      child: SvgPicture.asset(
+                        'assets/images/white_whistle.svg',
+                        colorFilter: ColorFilter.mode(
+                          Colors.white,
+                          BlendMode.srcIn,
                         ),
                       ),
                     ),
-                  );
-                },
+                  ),
+                ),
               ),
             ),
-          ],
-        ),
-        floatingActionButtonLocation: FloatingActionButtonLocation.endTop,
-      );
-    } catch (e) {
-      // Return a simple error widget if build fails
-      print('Error in MainScreen build: $e');
-      return Scaffold(
-        body: Center(
-          child: Text('Error loading match screen. Please restart the app.'),
-        ),
-      );
-    }
+        ],
+      ),
+      
+      floatingActionButton: Stack(
+        alignment: Alignment.topRight,
+        children: [
+          // Hint text for empty player list
+          if (appState.players.isEmpty)
+            Positioned(
+              top: 85,  // Adjusted down from 45
+              right: 0,
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.7),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  'Add Players',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+            
+          // The FAB with pulse animation
+          Positioned(  // Added Positioned widget to control exact placement
+            top: 40,  // Position it 40 pixels from the top
+            right: 0,  // Keep it aligned to the right
+            child: AnimatedBuilder(
+              animation: _pulseAnimation,
+              builder: (context, child) {
+                // Only pulse if there are no players
+                final shouldPulse = appState.players.isEmpty;
+                final scale = shouldPulse ? _pulseAnimation.value : 1.0;
+                
+                return Transform.scale(
+                  scale: scale,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => _showAddPlayerDialog(context),
+                      borderRadius: BorderRadius.circular(18),
+                      child: Container(
+                        width: 37,
+                        height: 37,
+                        decoration: BoxDecoration(
+                          color: shouldPulse 
+                              ? Colors.amber.withOpacity(0.9)
+                              : Color(0xFF555555).withOpacity(0.8),
+                          shape: BoxShape.circle,
+                          boxShadow: shouldPulse ? [
+                            BoxShadow(
+                              color: Colors.amber.withOpacity(0.6),
+                              blurRadius: 10,
+                              spreadRadius: 2,
+                            )
+                          ] : null,
+                        ),
+                        child: Icon(
+                          Icons.add,
+                          color: Colors.white,
+                          size: 23,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endTop,
+      
+      // Add whistle button on the left side
+      floatingActionButtonAnimator: FloatingActionButtonAnimator.scaling,
+    );
   }
 }
 

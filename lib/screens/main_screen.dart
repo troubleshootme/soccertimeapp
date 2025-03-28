@@ -10,7 +10,6 @@ import '../services/haptic_service.dart';
 import '../services/background_service.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/period_end_dialog.dart';
-import '../widgets/status_bar.dart'; // <-- Add this import
 
 class MainScreen extends StatefulWidget {
   @override
@@ -1853,6 +1852,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       }
     });
     
+    // Define the colors based on the dark theme settings
+    final statusBarBackgroundColor = isDark 
+        ? Colors.black38 
+        : Colors.grey.shade300; // More opaque light theme background
+    final statusTextColor = isDark 
+        ? Colors.white70
+        : Colors.black87; // Darker text for light theme
+    
     return Scaffold(
       backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
       body: Stack(
@@ -1872,16 +1879,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
               padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
               child: Column(
                 children: [
-                  // Status bar - NOW USING THE WIDGET FROM THE SEPARATE FILE
+                  // Status bar with player counts and match settings
                   StatusBar(
                     isDark: isDark,
                     activePlayerCount: appState.session.players.values.where((p) => p.active).length,
                     inactivePlayerCount: appState.session.players.values.where((p) => !p.active).length,
                     teamGoals: appState.session.teamGoals,
                     opponentGoals: appState.session.opponentGoals,
-                    isPaused: _isPaused, // Use local _isPaused state for UI responsiveness
+                    isPaused: _isPaused,
                     isMatchComplete: appState.session.isMatchComplete,
-                    isSetup: appState.session.isSetup,
+                    isSetup: appState.session.isSetup,  // Add isSetup parameter
                     enableTargetDuration: appState.session.enableTargetDuration,
                     enableMatchDuration: appState.session.enableMatchDuration,
                     targetPlayDuration: appState.session.targetPlayDuration,
@@ -2687,6 +2694,206 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       
       // Add whistle button on the left side
       floatingActionButtonAnimator: FloatingActionButtonAnimator.scaling,
+    );
+  }
+}
+
+// Add these widget classes before the MainScreen class
+
+class StatusBar extends StatelessWidget {
+  final bool isDark;
+  final int activePlayerCount;
+  final int inactivePlayerCount;
+  final int teamGoals;
+  final int opponentGoals;
+  final bool isPaused;
+  final bool isMatchComplete;
+  final bool isSetup;
+  final bool enableTargetDuration;
+  final bool enableMatchDuration;
+  final int targetPlayDuration;
+  final int matchDuration;
+
+  const StatusBar({
+    Key? key,
+    required this.isDark,
+    required this.activePlayerCount,
+    required this.inactivePlayerCount,
+    required this.teamGoals,
+    required this.opponentGoals,
+    required this.isPaused,
+    required this.isMatchComplete,
+    required this.isSetup,
+    required this.enableTargetDuration,
+    required this.enableMatchDuration,
+    required this.targetPlayDuration,
+    required this.matchDuration,
+  }) : super(key: key);
+
+  String _formatTime(int seconds) {
+    int minutes = seconds ~/ 60;
+    int remainingSeconds = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Define the colors based on the dark theme settings
+    final statusBarBackgroundColor = isDark 
+        ? Colors.black38 
+        : Colors.grey.shade300; // More opaque light theme background
+    final statusTextColor = isDark 
+        ? Colors.white70
+        : Colors.black87; // Darker text for light theme
+
+    return Container(
+      margin: EdgeInsets.only(bottom: 2),
+      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: statusBarBackgroundColor,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Player statistics
+          Row(
+            children: [
+              Icon(Icons.person, color: Colors.green.shade400, size: 14),
+              Text(
+                ' $activePlayerCount',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: statusTextColor,
+                ),
+              ),
+              SizedBox(width: 6),
+              Icon(Icons.person_outline, color: Colors.red.shade400, size: 14),
+              Text(
+                ' $inactivePlayerCount',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: statusTextColor,
+                ),
+              ),
+            ],
+          ),
+          // Score indicator
+          Row(
+            children: [
+              Row(
+                children: [
+                  SvgPicture.asset(
+                    'assets/images/soccerball.svg',
+                    height: 14,
+                    width: 14,
+                  ),
+                  SizedBox(width: 4),
+                  Text(
+                    '$teamGoals - $opponentGoals',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: statusTextColor,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          // Match status and duration indicators
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Match status (setup or paused indicator)
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: isSetup 
+                    ? Colors.blue.withOpacity(0.2)
+                    : (isPaused ? Colors.orange.withOpacity(0.2) : Colors.transparent),
+                  borderRadius: BorderRadius.circular(4),
+                  border: isSetup || (isPaused && !isMatchComplete)
+                    ? Border.all(
+                        color: isSetup 
+                          ? Colors.blue.withOpacity(0.5)
+                          : Colors.orange.withOpacity(0.5),
+                      )
+                    : null,
+                ),
+                child: isSetup
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.settings, color: Colors.blue, size: 12),
+                        SizedBox(width: 4),
+                        Text(
+                          'SETUP',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue,
+                          ),
+                        ),
+                      ],
+                    )
+                  : isPaused && !isMatchComplete
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.pause, color: Colors.orange, size: 12),
+                          SizedBox(width: 4),
+                          Text(
+                            'PAUSED',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.orange,
+                            ),
+                          ),
+                        ],
+                      )
+                    : SizedBox(width: 65),  // Maintain consistent width
+              ),
+              // Duration indicators - always show but with opacity based on enabled state
+              SizedBox(width: 8),
+              Opacity(
+                opacity: enableTargetDuration ? 1.0 : 0.0,
+                child: Row(
+                  children: [
+                    Icon(Icons.person_pin_circle, color: Colors.amber.shade400, size: 14),
+                    SizedBox(width: 2),
+                    Text(
+                      _formatTime(targetPlayDuration),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: statusTextColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 8),
+              Opacity(
+                opacity: enableMatchDuration ? 1.0 : 0.0,
+                child: Row(
+                  children: [
+                    Icon(Icons.timer, color: Colors.blue.shade400, size: 14),
+                    SizedBox(width: 2),
+                    Text(
+                      _formatTime(matchDuration),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: statusTextColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

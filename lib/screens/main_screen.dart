@@ -402,66 +402,75 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
             return;
           }
 
-          // Use floating point seconds for calculations
-          final elapsedSeconds = elapsedMillis / 1000.0;
-          final oldMatchTime = _matchTime; // Capture time before update
-          final appStateTime = appState.session.matchTime; // Capture AppState time for comparison
+          // Update app state with elapsed time
+          appState.updateMatchTimer(elapsedMillis: elapsedMillis.toDouble());
+          
+          // Check for period end BEFORE checking match end
+          // Only check if match is running and not paused
+          if (appState.session.matchRunning && !appState.session.isPaused && appState.shouldEndPeriod()) {
+            print("UI Timer detected period end condition");
+            print("Current time: ${appState.session.matchTime}, Period: ${appState.session.currentPeriod}");
+            
+            // Calculate exact period end time
+            final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
+            final exactPeriodEndTime = periodDuration * appState.session.currentPeriod;
+            
+            // Set the time to exactly the period end time
+            appState.updateMatchTime(exactPeriodEndTime);
+            _updateMatchTime(exactPeriodEndTime, forceUpdate: true);
+            
+            // End the period
+            appState.endPeriod();
+            
+            // Cancel the timer
+            _matchTimer?.cancel();
+            _matchTimer = null;
 
-          // --- START Detailed Logging ---
-          print('--- UI Timer Tick ---');
-          print('  Now         : $now ms');
-          print('  LastUpdate  : $lastUpdate ms');
-          print('  ElapsedMs   : $elapsedMillis ms');
-          print('  OldMatchTime: $oldMatchTime (UI)');
-          print('  AppStateTime: $appStateTime (State)');
-          // --- END Detailed Logging ---
-
-          // --- Drift Correction ---
-          double driftAdjustmentSeconds = 0;
-          if (_lastRealTimeCheck != null) {
-             final realElapsed = now - _lastRealTimeCheck!;
-             // Expected elapsed should be around 1000ms now
-             final timerElapsed = elapsedMillis;
-             final driftMillis = realElapsed - timerElapsed;
-             driftAdjustmentSeconds = driftMillis / 1000.0;
-             _accumulatedDrift += driftAdjustmentSeconds;
-             // Log only significant drift adjustments
-             if (driftMillis.abs() > 100) { // Log if drift > 100ms (adjust threshold as needed)
-                print('  DriftCheck  : Real=${realElapsed}ms, Timer=${timerElapsed}ms, Adjust=${driftAdjustmentSeconds.toStringAsFixed(3)}s, Accum=${_accumulatedDrift.toStringAsFixed(3)}s');
-             }
+            // Sound and haptic feedback
+            _audioService.playWhistle();
+            _hapticService.periodEnd(context);
+            
+            // Show period end dialog immediately
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => PeriodEndDialog(
+                    onNextPeriod: () {
+                      print("Starting next period via dialog");
+                      appState.startNextPeriod();
+                      _safeSetState(() {
+                        _isPaused = false;
+                      });
+                      _startMatchTimer();
+                      Navigator.of(context).pop();
+                    },
+                  ),
+                );
+              }
+            });
+            
+            return;
           }
-          _lastRealTimeCheck = now;
-          // --- End Drift Correction ---
-
-
-          // Calculate new time carefully
-          final newMatchTimeDouble = oldMatchTime + elapsedSeconds + driftAdjustmentSeconds; // Apply adjustment
-          final newMatchTime = newMatchTimeDouble.round(); // Round back to int
-
-          // --- More Logging ---
-          print('  NewMatchTime: $newMatchTime (Raw: ${newMatchTimeDouble.toStringAsFixed(3)})');
-          if (newMatchTime < oldMatchTime) {
-             print('  *** WARNING: UI Timer decreased! Old: $oldMatchTime, New: $newMatchTime ***');
+          
+          // Check for match end condition
+          if (appState.shouldEndMatch()) {
+            print("UI Timer detected match end condition");
+            appState.endMatch();
+            _matchTimer?.cancel();
+            _matchTimer = null;
+            return;
           }
-          // Check against AppState time as well
-           if (newMatchTime < appStateTime) {
-             print('  *** WARNING: UI Timer behind AppState! UI: $newMatchTime, State: $appStateTime ***');
-          }
-          // --- End More Logging ---
-
-
-          _safeSetState(() {
-            _matchTime = newMatchTime;
-            _matchTimeNotifier.value = _matchTime;
-            // Pass precise elapsed time in seconds (including drift) converted to milliseconds
-            appState.updateMatchTimer(elapsedMillis: (elapsedSeconds + driftAdjustmentSeconds) * 1000);
-          });
-
-          // Update timestamp *after* all calculations and state updates
+          
+          // Update local match time
+          _updateMatchTime(appState.session.matchTime);
+          
+          // Store the last update timestamp
           _lastUpdateTimestamp = now;
-          // Ensure AppState's lastUpdateTime is also updated consistently
-          appState.session.lastUpdateTime = now ~/ 1000;
-
+          
+          // Check for period end
+          _checkPeriodEnd();
         }
         // If elapsedMillis is positive but less than ~950ms, just wait for the next tick
       } else if (!mounted) {
@@ -927,7 +936,27 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     final appState = Provider.of<AppState>(context, listen: false);
     
     // If in setup mode and there are active players, start the match
-    if (appState.session.isSetup && _hasActivePlayer()) {
+    if (appState.session.isSetup) {
+      // Check if there are any active players
+      if (!_hasActivePlayer()) {
+        // Show warning snackbar
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.warning_amber_rounded, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Select at least one player to start the match'),
+              ],
+            ),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.orange.shade700,
+          ),
+        );
+        return; // Exit early without starting the match
+      }
+
       await _hapticService.matchStart(context);
       
       // First, start the match (this will set isSetup to false)
@@ -1125,99 +1154,163 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   }
 
   void _showAddPlayerDialog(BuildContext context) {
-    final textController = TextEditingController();
+    final appState = Provider.of<AppState>(context, listen: false);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Request focus after the dialog is built using a post-frame callback
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _addPlayerFocusNode.canRequestFocus) {
-        _addPlayerFocusNode.requestFocus();
-      }
-    });
+    // Check if match is running and not paused
+    if (appState.session.matchRunning && !appState.session.isPaused) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(
+            'Warning',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            ),
+          ),
+          content: Text('Adding a player to a running match will pause the match.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey,
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _showActualAddPlayerDialog(context);
+              },
+              child: Text('Continue'),
+            ),
+          ],
+          actionsAlignment: MainAxisAlignment.spaceBetween,
+        ),
+      );
+      return;
+    }
+
+    // If match is not running or already paused, show add player dialog directly
+    _showActualAddPlayerDialog(context);
+  }
+
+  void _showActualAddPlayerDialog(BuildContext context) {
+    final textController = TextEditingController();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final focusNode = FocusNode();  // Create a local focus node
+
+    // Pause the timer while dialog is open to prevent state updates
+    final wasRunning = !_isPaused;
+    if (wasRunning) {
+      _pauseAll();
+    }
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        // Use a UniqueKey to ensure the dialog rebuilds properly if reopened quickly
-        key: UniqueKey(),
-        title: Text(
-          'Add Player',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: isDark ? AppThemes.darkText : AppThemes.lightText,
-            letterSpacing: 1.0,
-          ),
-        ),
-        content: TextField(
-          controller: textController,
-          focusNode: _addPlayerFocusNode,
-          // Keep autofocus true as a fallback
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-          decoration: InputDecoration(hintText: 'Player Name'),
-          onSubmitted: (value) async {
-            if (value.trim().isNotEmpty) {
-              try {
-                // Add player and wait for the operation to complete
-                final appState = Provider.of<AppState>(context, listen: false);
-                await appState.addPlayer(value.trim());
-
-                // Close dialog and update state
-                if (context.mounted) {
-                  Navigator.pop(context);
-                  // Reopen dialog for quick adding of multiple players - keep this for now
-                  Future.delayed(Duration(milliseconds: 100), () {
-                    if (mounted) _showAddPlayerDialog(context);
-                  });
-                }
-              } catch (e) {
-                print('Error adding player: $e');
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Could not add player: $e'))
-                  );
-                }
-              }
+      barrierDismissible: true,  // Allow dismissing by tapping outside
+      builder: (dialogContext) => StatefulBuilder(  // Use StatefulBuilder to manage dialog state
+        builder: (context, setState) {
+          // Request focus when dialog is built
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (focusNode.canRequestFocus) {
+              focusNode.requestFocus();
             }
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () async {
-              if (textController.text.trim().isNotEmpty) {
-                try {
-                  // Add player and wait for the operation to complete
-                  final appState = Provider.of<AppState>(context, listen: false);
-                  await appState.addPlayer(textController.text.trim());
+          });
 
-                  // Close dialog and update state
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                    // Don't need the WidgetsBinding here, handled by Provider
-                  }
-                } catch (e) {
-                  print('Error adding player: $e');
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Could not add player: $e'))
-                    );
+          return AlertDialog(
+            key: UniqueKey(),
+            title: Text(
+              'Add Player',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: isDark ? AppThemes.darkText : AppThemes.lightText,
+                letterSpacing: 1.0,
+              ),
+            ),
+            content: TextField(
+              controller: textController,
+              focusNode: focusNode,
+              autofocus: true,
+              textCapitalization: TextCapitalization.words,
+              decoration: InputDecoration(hintText: 'Player Name'),
+              onSubmitted: (value) async {
+                if (value.trim().isNotEmpty) {
+                  try {
+                    final appState = Provider.of<AppState>(context, listen: false);
+                    await appState.addPlayer(value.trim());
+                    
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                      // Clear the text and show dialog again for quick adding
+                      textController.clear();
+                      Future.delayed(Duration(milliseconds: 100), () {
+                        if (mounted) _showActualAddPlayerDialog(context);
+                      });
+                    }
+                  } catch (e) {
+                    print('Error adding player: $e');
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Could not add player: $e'))
+                      );
+                    }
                   }
                 }
-              }
-            },
-            child: Text('Add'),
-          ),
-        ],
+              },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  // Resume the timer if it was running before
+                  if (wasRunning) {
+                    _pauseAll();
+                  }
+                },
+                child: Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  if (textController.text.trim().isNotEmpty) {
+                    try {
+                      final appState = Provider.of<AppState>(context, listen: false);
+                      await appState.addPlayer(textController.text.trim());
+                      
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        // Resume the timer if it was running before
+                        if (wasRunning) {
+                          _pauseAll();
+                        }
+                      }
+                    } catch (e) {
+                      print('Error adding player: $e');
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Could not add player: $e'))
+                        );
+                      }
+                    }
+                  }
+                },
+                child: Text('Add'),
+              ),
+            ],
+          );
+        },
       ),
     ).then((_) {
-      // Ensure focus is released when the dialog is dismissed.
-      // This prevents potential issues if the screen rebuilds or the node is reused.
-      _addPlayerFocusNode.unfocus();
+      // Clean up
+      focusNode.dispose();
+      textController.dispose();
+      // Resume the timer if it was running before and dialog was dismissed
+      if (wasRunning) {
+        _pauseAll();
+      }
     });
   }
 

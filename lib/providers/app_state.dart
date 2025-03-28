@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:vibration/vibration.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
+import '../models/match_log_entry.dart';
 
 class AppState with ChangeNotifier {
   bool _isDarkTheme = true;
@@ -1034,7 +1035,22 @@ class AppState with ChangeNotifier {
     
     // Add session name as header
     buffer.writeln('MATCH LOG: ${_session.sessionName}');
-    buffer.writeln(dateFormat.format(DateTime.now())); // US formatted date/time
+    
+    // Find the match start entry to get the start time
+    final matchStartEntry = _session.matchLog.firstWhere(
+      (entry) => entry.entryType == 'match_start',
+      orElse: () => MatchLogEntry(
+        matchTime: '00:00',
+        seconds: 0,
+        timestamp: DateTime.now().toIso8601String(),
+        details: 'Match Started',
+        entryType: 'match_start'
+      ),
+    );
+    
+    // Parse the timestamp and format it
+    final startTime = DateTime.parse(matchStartEntry.timestamp);
+    buffer.writeln(dateFormat.format(startTime)); // Use match start time
     buffer.writeln('----------------------------------------');
     
     // Add current score

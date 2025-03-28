@@ -1852,6 +1852,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       }
     });
     
+    // Define the colors based on the dark theme settings
+    final statusBarBackgroundColor = isDark 
+        ? Colors.black38 
+        : Colors.grey.shade300; // More opaque light theme background
+    final statusTextColor = isDark 
+        ? Colors.white70
+        : Colors.black87; // Darker text for light theme
+    
     return Scaffold(
       backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
       body: Stack(
@@ -2700,7 +2708,7 @@ class StatusBar extends StatelessWidget {
   final int opponentGoals;
   final bool isPaused;
   final bool isMatchComplete;
-  final bool isSetup;  // Add isSetup parameter
+  final bool isSetup;
   final bool enableTargetDuration;
   final bool enableMatchDuration;
   final int targetPlayDuration;
@@ -2715,7 +2723,7 @@ class StatusBar extends StatelessWidget {
     required this.opponentGoals,
     required this.isPaused,
     required this.isMatchComplete,
-    required this.isSetup,  // Add isSetup parameter
+    required this.isSetup,
     required this.enableTargetDuration,
     required this.enableMatchDuration,
     required this.targetPlayDuration,
@@ -2731,14 +2739,17 @@ class StatusBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Define the colors based on the dark theme settings
-    final statusBarBackgroundColor = Colors.black38;
-    final statusTextColor = Colors.white70;
+    final statusBarBackgroundColor = isDark 
+        ? Colors.black38 
+        : Colors.grey.shade300; // More opaque light theme background
+    final statusTextColor = isDark 
+        ? Colors.white70
+        : Colors.black87; // Darker text for light theme
 
     return Container(
       margin: EdgeInsets.only(bottom: 2),
       padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        // Always use the dark theme background color
         color: statusBarBackgroundColor,
         borderRadius: BorderRadius.circular(4),
       ),
@@ -2753,7 +2764,6 @@ class StatusBar extends StatelessWidget {
                 ' $activePlayerCount',
                 style: TextStyle(
                   fontSize: 12,
-                  // Always use the dark theme text color
                   color: statusTextColor,
                 ),
               ),
@@ -2763,7 +2773,6 @@ class StatusBar extends StatelessWidget {
                 ' $inactivePlayerCount',
                 style: TextStyle(
                   fontSize: 12,
-                  // Always use the dark theme text color
                   color: statusTextColor,
                 ),
               ),
@@ -2785,7 +2794,6 @@ class StatusBar extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
-                      // Always use the dark theme text color
                       color: statusTextColor,
                     ),
                   ),
@@ -2859,7 +2867,6 @@ class StatusBar extends StatelessWidget {
                       _formatTime(targetPlayDuration),
                       style: TextStyle(
                         fontSize: 12,
-                        // Always use the dark theme text color
                         color: statusTextColor,
                       ),
                     ),
@@ -2877,7 +2884,6 @@ class StatusBar extends StatelessWidget {
                       _formatTime(matchDuration),
                       style: TextStyle(
                         fontSize: 12,
-                        // Always use the dark theme text color
                         color: statusTextColor,
                       ),
                     ),

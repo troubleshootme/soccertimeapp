@@ -7,6 +7,7 @@ import 'package:vibration/vibration.dart';
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import '../providers/app_state.dart';
 import 'package:meta/meta.dart';
+import 'haptic_service.dart';
 
 @pragma('vm:entry-point')
 class BackgroundService {
@@ -30,6 +31,12 @@ class BackgroundService {
   int? _lastBackgroundTimestamp;
   bool _periodEndDetected = false;
   bool _matchEndDetected = false;
+  
+  // Add coundown-related fields
+  bool _isCountdownActive = false;
+  Timer? _countdownTimer;
+  static const int countdownStartSeconds = 5; // Start countdown 5 seconds before end
+  final HapticService _hapticService = HapticService();
 
   // Background service configuration for Android
   final androidConfig = const FlutterBackgroundAndroidConfig(
@@ -179,6 +186,9 @@ class BackgroundService {
     _periodEndDetected = false;
     _matchEndDetected = false;
     
+    // Reset countdown state
+    _stopCountdown();
+    
     // Store initial timestamp when starting the background timer
     _lastBackgroundTimestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     appState.session.lastUpdateTime = _lastBackgroundTimestamp;
@@ -221,93 +231,57 @@ class BackgroundService {
       }
     }
     
+    // Start the timer to periodically check if we need to update the match time
+    print("Starting background timer");
     _backgroundTimer = Timer.periodic(Duration(seconds: 1), (timer) {
-      if (appState.session.matchRunning && !appState.session.isPaused) {
-        final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-        final lastUpdate = appState.session.lastUpdateTime ?? now;
-        final elapsed = now - lastUpdate;
-
-        if (elapsed > 0) {
-          // Get current match time from app state
-          final currentMatchTime = appState.session.matchTime;
+      // Calculate elapsed time since the last update
+      final currentTimestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final elapsedSeconds = currentTimestamp - _lastBackgroundTimestamp!;
+      
+      if (elapsedSeconds <= 0) return; // Skip if no time has passed
+      
+      // Calculate the new match time
+      final newMatchTime = appState.session.matchTime + elapsedSeconds;
+      
+      // Calculate period end times for checks
+      final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
+      final currentPeriodEndTime = periodDuration * appState.session.currentPeriod;
+      final matchEndTime = appState.session.matchDuration;
+      
+      // Calculate time remaining until period/match end
+      final timeUntilPeriodEnd = currentPeriodEndTime - newMatchTime;
+      final timeUntilMatchEnd = matchEndTime - newMatchTime;
+      final isFinalPeriod = appState.session.currentPeriod >= appState.session.matchSegments;
+      
+      // Check if we're approaching period end and should start countdown
+      if (!_isCountdownActive && 
+          appState.session.enableMatchDuration &&
+          appState.session.matchRunning && 
+          !appState.session.isPaused) {
+        
+        // Check for period end countdown
+        if (!isFinalPeriod && 
+            timeUntilPeriodEnd > 0 && 
+            timeUntilPeriodEnd <= countdownStartSeconds) {
           
-          // Calculate period boundary information
-          final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
-          final currentPeriodEndTime = periodDuration * appState.session.currentPeriod;
+          print("Starting period end countdown vibration - $timeUntilPeriodEnd seconds remaining");
+          _startCountdownVibrations(false);
+        }
+        // Check for match end countdown
+        else if (isFinalPeriod && 
+                timeUntilMatchEnd > 0 && 
+                timeUntilMatchEnd <= countdownStartSeconds) {
           
-          // First, check for match end condition (in final period)
-          final isFinalPeriod = appState.session.currentPeriod == appState.session.matchSegments;
-          if (isFinalPeriod && 
-              currentMatchTime >= appState.session.matchDuration && 
-              appState.session.enableMatchDuration && 
-              !appState.session.isMatchComplete) {
-              
-            print("Background timer detected MATCH END condition");
-            print("Current time: $currentMatchTime, Match duration: ${appState.session.matchDuration}");
-            
-            // Record that a match end was detected
-            _matchEndDetected = true;
-            
-            // Update lastUpdateTime
-            appState.session.lastUpdateTime = now;
-            _lastBackgroundTimestamp = now;
-            
-            // Call endMatch to handle the match completion
-            appState.endMatch();
-            
-            // Update notification to show match ended
-            _updateBackgroundNotification("🏆 MATCH COMPLETE! 🏆");
-            
-            print("Match ended in background at exactly ${appState.session.matchDuration}");
-            
-            // Start periodic reminder vibrations for match end
-            _startReminderVibrations(isMatchEnd: true, enableVibration: appState.session.enableVibration);
-            
-            return;
-          }
-          
-          // Check if we would cross or reach period end
-          if (currentMatchTime >= currentPeriodEndTime && 
-              appState.session.enableMatchDuration && 
-              !appState.session.hasWhistlePlayed &&
-              appState.session.currentPeriod < appState.session.matchSegments) {
-              
-            print("Background timer detected period end condition");
-            print("Current time: $currentMatchTime, Period end: $currentPeriodEndTime");
-            
-            // Record that a period end was detected
-            _periodEndDetected = true;
-            
-            // Update lastUpdateTime
-            appState.session.lastUpdateTime = now;
-            _lastBackgroundTimestamp = now;
-            
-            // Call endPeriod to handle pausing and state changes
-            appState.endPeriod();
-            
-            // Update notification to show period ended
-            final periodName = appState.session.matchSegments == 2 ? 'Half' : 'Quarter';
-            final periodEndText = "🔔 ${appState.session.currentPeriod}${_getOrdinalSuffix(appState.session.currentPeriod)} $periodName ENDED! 🔔";
-            _updateBackgroundNotification(periodEndText);
-            
-            print("Period ended in background at exactly $currentPeriodEndTime");
-            
-            // Start periodic reminder vibrations with vibration setting
-            _startReminderVibrations(isPeriodEnd: true, enableVibration: appState.session.enableVibration);
-            
-            // Pause the match
-            appState.session.isPaused = true;
-            appState.session.matchRunning = false;
-          } else {
-            // Just update notification text periodically
-            if (elapsed >= 5 || currentMatchTime % 5 == 0) {
-              _updateBackgroundNotification(
-                _getMatchTimeNotificationText(currentMatchTime, currentPeriodEndTime, appState.session.currentPeriod, appState.session.matchSegments)
-              );
-            }
-          }
+          print("Starting match end countdown vibration - $timeUntilMatchEnd seconds remaining");
+          _startCountdownVibrations(true);
         }
       }
+      
+      // Update the match time in the app state
+      appState.session.matchTime = newMatchTime;
+      
+      // Update lastBackgroundTimestamp
+      _lastBackgroundTimestamp = currentTimestamp;
     });
   }
 
@@ -626,5 +600,48 @@ class BackgroundService {
         }
       }
     }
+  }
+
+  // Add method to perform countdown vibration
+  @pragma('vm:entry-point')
+  Future<void> _performCountdownVibration() async {
+    final hasVibrator = await Vibration.hasVibrator();
+    if (hasVibrator == true) {
+      await Vibration.vibrate(duration: 80, amplitude: 150);
+    }
+  }
+  
+  // Add method to start countdown vibrations
+  @pragma('vm:entry-point')
+  void _startCountdownVibrations(bool isMatchEnd) {
+    // Cancel any existing countdown timer
+    _countdownTimer?.cancel();
+    
+    _isCountdownActive = true;
+    int remainingSeconds = countdownStartSeconds;
+    
+    // Immediately vibrate
+    _performCountdownVibration();
+    
+    _countdownTimer = Timer.periodic(Duration(seconds: 1), (timer) {
+      remainingSeconds--;
+      
+      if (remainingSeconds <= 0) {
+        // Countdown finished
+        timer.cancel();
+        _countdownTimer = null;
+        _isCountdownActive = false;
+      } else {
+        // Continue the countdown vibrations
+        _performCountdownVibration();
+      }
+    });
+  }
+  
+  // Add method to stop countdown
+  void _stopCountdown() {
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+    _isCountdownActive = false;
   }
 } 

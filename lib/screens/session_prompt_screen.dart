@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../session_dialog.dart';
 import '../hive_database.dart';
 import '../providers/app_state.dart';
@@ -32,7 +33,8 @@ class _SessionPromptScreenState extends State<SessionPromptScreen> {
         if (!didPop) {
           final shouldExit = await _showExitConfirmationDialog();
           if (shouldExit) {
-            Navigator.of(context).pop();
+            // Exit the app properly
+            SystemNavigator.pop();
           }
         }
       },

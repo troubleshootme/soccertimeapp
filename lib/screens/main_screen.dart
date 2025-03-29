@@ -11,6 +11,7 @@ import '../services/background_service.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/period_end_dialog.dart';
 import '../services/translation_service.dart';
+import 'package:flutter/services.dart';
 
 class MainScreen extends StatefulWidget {
   @override
@@ -50,6 +51,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   // Add this variable to track if UI needs update
   bool _needsUIUpdate = false;
   DateTime _lastUIUpdate = DateTime.now();
+
+  // Add this variable to control/debounce haptic feedback
+  DateTime? _lastHapticFeedback;
+  final _hapticDebounceMillis = 2000; // 2 seconds
 
   @override
   void initState() {
@@ -378,164 +383,31 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   }
 
   void _startMatchTimer() {
+    // Cancel any existing timer
     _matchTimer?.cancel();
-    final appState = Provider.of<AppState>(context, listen: false);
-
-    // Ensure initial timestamp is set correctly when timer starts/resumes
-    _lastUpdateTimestamp = DateTime.now().millisecondsSinceEpoch;
-    _lastRealTimeCheck = _lastUpdateTimestamp; // Initialize real time check
-    appState.session.lastUpdateTime = _lastUpdateTimestamp! ~/ 1000; // Update AppState timestamp
-
-    print('UI Timer Started/Resumed at: $_lastUpdateTimestamp ms (${appState.session.lastUpdateTime} s)'); // Log start time
-
-    // Change the Duration here from milliseconds: 200 to seconds: 1
-    _matchTimer = Timer.periodic(Duration(seconds: 1), (timer) { // NOW 1 SECOND INTERVAL
-      if (!_isPaused && mounted) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        // Use _lastUpdateTimestamp for UI timer calculation
-        final lastUpdate = _lastUpdateTimestamp ?? now;
-        final elapsedMillis = now - lastUpdate;
-
-        // Process only if roughly a second or more has passed (or clock jumped back)
-        if (elapsedMillis >= 950 || elapsedMillis < 0) { // Allow a small threshold < 1000ms
-          if (elapsedMillis < 0) {
-            // Handle potential clock adjustments
-            print("Warning: UI Timer clock adjustment detected (elapsed time negative: $elapsedMillis). Resetting last update time.");
-            _lastUpdateTimestamp = now;
-            appState.session.lastUpdateTime = now ~/ 1000;
-            // Skip the rest of the update for this tick to avoid bad calculations
-            return;
-          }
-
-          // Update app state with elapsed time
-          appState.updateMatchTimer(elapsedMillis: elapsedMillis.toDouble());
-          
-          // Check for period end BEFORE checking match end
-          // Only check if match is running and not paused
-          if (appState.session.matchRunning && !appState.session.isPaused && appState.shouldEndPeriod()) {
-            print("UI Timer detected period end condition");
-            print("Current time: ${appState.session.matchTime}, Period: ${appState.session.currentPeriod}");
-            
-            // Calculate exact period end time
-            final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
-            final exactPeriodEndTime = periodDuration * appState.session.currentPeriod;
-            
-            // Set the time to exactly the period end time
-            appState.updateMatchTime(exactPeriodEndTime);
-            _updateMatchTime(exactPeriodEndTime, forceUpdate: true);
-            
-            // End the period
-            appState.endPeriod();
-            
-            // Cancel the timer
-            _matchTimer?.cancel();
-            _matchTimer = null;
-
-            // Sound and haptic feedback
-            _audioService.playWhistle();
-            _hapticService.periodEnd(context);
-            
-            // Show period end dialog immediately
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (context) => PeriodEndDialog(
-                    onNextPeriod: () {
-                      print("Starting next period via dialog");
-                      appState.startNextPeriod();
-                      _safeSetState(() {
-                        _isPaused = false;
-                      });
-                      _startMatchTimer();
-                      Navigator.of(context).pop();
-                    },
-                  ),
-                );
-              }
-            });
-            
-            return;
-          }
-          
-          // Check for match end condition
-          final session = appState.session;
-          final isFinalPeriod = session.currentPeriod == session.matchSegments;
-          if (session.matchRunning && !session.isPaused && 
-              isFinalPeriod && session.enableMatchDuration && 
-              session.matchTime >= session.matchDuration && 
-              !session.isMatchComplete) {
-                
-            print("UI Timer detected match end condition");
-            
-            // Ensure the match time is exactly at the match duration for consistency
-            appState.updateMatchTime(session.matchDuration);
-            _updateMatchTime(session.matchDuration, forceUpdate: true);
-            
-            // Debug the state before ending the match
-            print("MATCH END DEBUG: Before endMatch - Time=${session.matchTime}, Duration=${session.matchDuration}, Period=${session.currentPeriod}/${session.matchSegments}, Complete=${session.isMatchComplete}");
-            
-            appState.endMatch();
-            
-            // Verify match was correctly ended
-            print("MATCH END DEBUG: After endMatch - isMatchComplete=${appState.session.isMatchComplete}");
-            
-            // Debug the match log entries
-            print("MATCH LOG DEBUG: Current log entries: ${appState.session.matchLog.length}");
-            for (int i = 0; i < appState.session.matchLog.length; i++) {
-              final entry = appState.session.matchLog[i];
-              print("MATCH LOG ENTRY $i: Time=${entry.matchTime}, Details=${entry.details}, Type=${entry.entryType}");
-            }
-            
-            // Sound and haptic feedback
-            _audioService.playWhistle();
-            _hapticService.matchEnd(context);
-            
-            // Show match end notification
-            _showMatchEndNotification();
-            
-            // Show match end dialog
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (context) => PeriodEndDialog(
-                    // Add isMatchEnd parameter to indicate match completion
-                    isMatchEnd: true,
-                    onOk: () {
-                      print("MATCH END DIALOG: Processing OK button click for match end");
-                      final appState = Provider.of<AppState>(context, listen: false);
-                      
-                      // Use the dedicated method to ensure match end is logged
-                      appState.ensureMatchEndLogged();
-                      
-                      // Close the dialog
-                      Navigator.of(context).pop();
-                    },
-                  ),
-                );
-              }
-            });
-            
-            _matchTimer?.cancel();
-            _matchTimer = null;
-            return;
-          }
-          
-          // Update local match time
-          _updateMatchTime(appState.session.matchTime);
-          
-          // Store the last update timestamp
-          _lastUpdateTimestamp = now;
-          
-          // Check for period end
-          _checkPeriodEnd();
-        }
-        // If elapsedMillis is positive but less than ~950ms, just wait for the next tick
-      } else if (!mounted) {
+    
+    // Start a new timer
+    _matchTimer = Timer.periodic(Duration(seconds: 1), (timer) {
+      if (!mounted) {
         timer.cancel();
+        return;
+      }
+      
+      final appState = Provider.of<AppState>(context, listen: false);
+      
+      // Only update the timer if the match is running and not paused
+      if (appState.session.matchRunning && !appState.session.isPaused) {
+        _safeSetState(() {
+          _matchTime += 1;
+          _matchTimeNotifier.value = _matchTime;
+        });
+        
+        // Call the update timer method to check for countdown
+        _updateTimer();
+        
+        // Update the last match time in the app state
+        appState.session.matchTime = _matchTime;
+        appState.session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       }
     });
   }
@@ -1991,9 +1863,17 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (!didPop) {
-          final shouldPop = await _showExitWarning();
-          if (shouldPop) {
-            Navigator.of(context).pop();
+          final shouldExit = await _showExitWarning();
+          if (shouldExit) {
+            // Clear session and exit
+            Provider.of<AppState>(context, listen: false).clearCurrentSession();
+            
+            // Use pushAndRemoveUntil to clear navigation history
+            Navigator.pushNamedAndRemoveUntil(
+              context, 
+              '/', 
+              (route) => false
+            );
           }
         }
       },
@@ -2641,8 +2521,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                                                      child: Text('Exit'),
                                                      onPressed: () {
                                                        Provider.of<AppState>(context, listen: false).clearCurrentSession();
+                                                       
+                                                       // Cancel any active timers
+                                                       _matchTimer?.cancel();
+                                                       
                                                        Navigator.of(context).pop();
-                                                       Navigator.of(context).pushReplacementNamed('/');
+                                                       Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
                                                      },
                                                    ),
                                                  ],
@@ -2869,7 +2753,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
             ),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () {
+              // First close the dialog
+              Navigator.of(context).pop(true);
+            },
             child: Text(
               'Exit',
               style: TextStyle(
@@ -2880,7 +2767,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
           ),
         ],
       ),
-    ) ?? false; // Default to false if dialog is dismissed
+    ) ?? false;
   }
 
   void _checkBackgroundTimeSyncOnResume() {
@@ -2965,6 +2852,78 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   void _startNextPeriod() {
     final appState = Provider.of<AppState>(context, listen: false);
     appState.startNextPeriod();
+  }
+
+  // Add this new method to safely exit to home screen
+  void _safeExitToHomeScreen() {
+    final appState = Provider.of<AppState>(context, listen: false);
+    
+    // First make sure timers are stopped
+    _matchTimer?.cancel();
+    
+    // Then clear the session
+    appState.clearCurrentSession();
+    appState.saveSession();
+    
+    // Navigate safely back to home screen
+    Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+  }
+
+  // Replace/add this method to ensure haptic feedback isn't triggered too frequently
+  Future<void> _safeHapticFeedback(Future<void> Function() feedbackFn) async {
+    final now = DateTime.now();
+    if (_lastHapticFeedback == null || 
+        now.difference(_lastHapticFeedback!).inMilliseconds > _hapticDebounceMillis) {
+      _lastHapticFeedback = now;
+      await feedbackFn();
+    } else {
+      print("Skipping haptic feedback - debounced (last: ${now.difference(_lastHapticFeedback!).inMilliseconds}ms ago)");
+    }
+  }
+  
+  // Method to play period end sound and haptic feedback with debouncing
+  void _playPeriodEndFeedback() {
+    _audioService.playWhistle();
+    _safeHapticFeedback(() => _hapticService.periodEnd(context));
+  }
+
+  void _updateTimer() {
+    if (!mounted) return;
+    
+    final appState = Provider.of<AppState>(context, listen: false);
+    
+    if (appState.session.matchRunning && !appState.session.isPaused) {
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      
+      // Calculate elapsed time since the last update
+      final lastUpdateTime = appState.session.lastUpdateTime;
+      
+      // Store current state for check below
+      final currentMatchTime = _matchTime;
+      
+      // Calculate period end time
+      final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
+      final currentPeriodEndTime = periodDuration * appState.session.currentPeriod;
+      final isLastPeriod = appState.session.currentPeriod == appState.session.matchSegments;
+      final matchEndTime = appState.session.matchDuration;
+      
+      // Check for the start of the 5-second countdown to period/match end
+      if (appState.session.enableMatchDuration) {
+        // Time remaining until the period end
+        final timeToNextPeriod = currentPeriodEndTime - currentMatchTime;
+        // Time remaining until match end (in final period)
+        final timeToMatchEnd = isLastPeriod ? (matchEndTime - currentMatchTime) : 999;
+        
+        // Start the vibration countdown for period end
+        if (!isLastPeriod && timeToNextPeriod == 5) {
+          _hapticService.startPeriodEndCountdown(context);
+        }
+        // Start the vibration countdown for match end
+        else if (isLastPeriod && timeToMatchEnd == 5) {
+          _hapticService.startMatchEndCountdown(context);
+        }
+      }
+    }
   }
 }
 

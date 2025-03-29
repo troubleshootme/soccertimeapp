@@ -235,6 +235,37 @@ class BackgroundService {
           final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
           final currentPeriodEndTime = periodDuration * appState.session.currentPeriod;
           
+          // First, check for match end condition (in final period)
+          final isFinalPeriod = appState.session.currentPeriod == appState.session.matchSegments;
+          if (isFinalPeriod && 
+              currentMatchTime >= appState.session.matchDuration && 
+              appState.session.enableMatchDuration && 
+              !appState.session.isMatchComplete) {
+              
+            print("Background timer detected MATCH END condition");
+            print("Current time: $currentMatchTime, Match duration: ${appState.session.matchDuration}");
+            
+            // Record that a match end was detected
+            _matchEndDetected = true;
+            
+            // Update lastUpdateTime
+            appState.session.lastUpdateTime = now;
+            _lastBackgroundTimestamp = now;
+            
+            // Call endMatch to handle the match completion
+            appState.endMatch();
+            
+            // Update notification to show match ended
+            _updateBackgroundNotification("🏆 MATCH COMPLETE! 🏆");
+            
+            print("Match ended in background at exactly ${appState.session.matchDuration}");
+            
+            // Start periodic reminder vibrations for match end
+            _startReminderVibrations(isMatchEnd: true, enableVibration: appState.session.enableVibration);
+            
+            return;
+          }
+          
           // Check if we would cross or reach period end
           if (currentMatchTime >= currentPeriodEndTime && 
               appState.session.enableMatchDuration && 

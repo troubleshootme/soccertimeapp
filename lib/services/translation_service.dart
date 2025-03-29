@@ -23,7 +23,7 @@ class TranslationService {
     'match.match_started': 'Match started',
     'match.match_paused': 'Match paused',
     'match.match_resumed': 'Match resumed',
-    'match.match_complete': 'Match complete',
+    'match.match_complete': 'Match Complete!',
     'match.no_active_players': 'No active players',
     'match.active_players_moved': 'active players moved to next period',
     'match.half': 'Half',

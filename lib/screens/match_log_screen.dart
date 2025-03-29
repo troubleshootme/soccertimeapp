@@ -7,6 +7,9 @@ import '../utils/app_themes.dart';
 import '../services/translation_service.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'dart:io';
+import '../services/pdf_service.dart';
+import 'pdf_preview_screen.dart';
 
 class MatchLogScreen extends StatefulWidget {
   @override
@@ -15,6 +18,7 @@ class MatchLogScreen extends StatefulWidget {
 
 class _MatchLogScreenState extends State<MatchLogScreen> {
   bool _isAscendingOrder = true; // Default to ascending (match time order)
+  bool _isExportingPdf = false;
   
   @override
   Widget build(BuildContext context) {
@@ -42,17 +46,56 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
               });
             },
           ),
-          if (logs.isNotEmpty)
+          if (logs.isNotEmpty) ...[
+            // PDF Export Button
+            IconButton(
+              icon: Icon(Icons.picture_as_pdf),
+              tooltip: 'Export as PDF',
+              onPressed: _isExportingPdf ? null : () => _exportToPdf(context, appState, logs),
+            ),
+            // Share Text Button
             IconButton(
               icon: Icon(Icons.share),
               tooltip: 'Share Match Log',
               onPressed: () => _shareMatchLog(context, appState),
             ),
+          ],
         ],
       ),
-      body: logs.isEmpty
-          ? _buildEmptyState(context, isDark)
-          : _buildLogList(context, logs, isDark),
+      body: Stack(
+        children: [
+          logs.isEmpty
+              ? _buildEmptyState(context, isDark)
+              : _buildLogList(context, logs, isDark),
+              
+          // Show loading indicator when exporting PDF
+          if (_isExportingPdf)
+            Container(
+              color: Colors.black54,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(
+                      color: isDark 
+                          ? AppThemes.darkSecondaryBlue 
+                          : AppThemes.lightSecondaryBlue,
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      'Generating PDF...',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
         onPressed: () => Navigator.pop(context),
@@ -96,13 +139,27 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
   
   Widget _buildLogList(BuildContext context, List<MatchLogEntry> logs, bool isDark) {
     // Define colors for different entry types
-    final mintGreen = Color(0xFF98D7C2);
+    final mintGreen = Color(0xFF26C485);
     final darkMintGreen = Color(0xFF3EAB87);
-    final softCyan = Color(0xFF00BCD4);
+    final softCyan = Color(0xFF29B6F6);      // Light Blue for match/period events
+    final darkCyan = Color(0xFF0288D1);      // Darker Light Blue for dark theme
     final softRed = Color(0xFFE57373);
     final darkRed = Color(0xFFD32F2F);
     final softAmber = Color(0xFFFFCA28);
     final darkAmber = Color(0xFFFFA000);
+    
+    // If there are no entries, show a message
+    if (logs.isEmpty) {
+      return Center(
+        child: Text(
+          'No match events recorded',
+          style: TextStyle(
+            color: isDark ? Colors.white70 : Colors.black54,
+            fontSize: 16,
+          ),
+        ),
+      );
+    }
     
     return ListView.builder(
       itemCount: logs.length,
@@ -122,7 +179,8 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
         final isPeriodTransition = entry.entryType?.toLowerCase() == 'period_transition';
         final isMatchStart = entry.details.toLowerCase().contains(context.tr('match.match_started').toLowerCase()) ||
                            entry.entryType?.toLowerCase() == 'match_start';
-        final isMatchComplete = entry.details.toLowerCase().contains(context.tr('match.match_complete').toLowerCase());
+        final isMatchComplete = entry.details.toLowerCase().contains(context.tr('match.match_complete').toLowerCase()) ||
+                              entry.entryType?.toLowerCase() == 'match_end';
         final isPlayerEnter = entry.details.toLowerCase().contains(context.tr('match.entered_game').toLowerCase());
         final isPlayerExit = entry.details.toLowerCase().contains(context.tr('match.left_game').toLowerCase());
         
@@ -136,16 +194,16 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
         Color timeTextColor;
         Color timeContainerBorderColor;
         
-        if (isMatchComplete || isMatchStart || isGoal) {
-          // Match complete, start, or goal - amber
+        if (isGoal) {
+          // Goal events - amber/gold
           timeContainerColor = isDark ? darkAmber.withOpacity(0.2) : softAmber.withOpacity(0.2);
           timeContainerBorderColor = isDark ? darkAmber.withOpacity(0.4) : softAmber.withOpacity(0.4);
           timeTextColor = isDark ? softAmber : darkAmber;
-        } else if (isPeriodTransition) {
-          // Period transitions - cyan
-          timeContainerColor = isDark ? softCyan.withOpacity(0.2) : softCyan.withOpacity(0.2);
-          timeContainerBorderColor = isDark ? softCyan.withOpacity(0.4) : softCyan.withOpacity(0.4);
-          timeTextColor = isDark ? Colors.white : softCyan;
+        } else if (isMatchStart || isPeriodTransition || isMatchComplete || isWhistleEntry) {
+          // All match/period events - light blue
+          timeContainerColor = isDark ? darkCyan.withOpacity(0.2) : softCyan.withOpacity(0.2);
+          timeContainerBorderColor = isDark ? darkCyan.withOpacity(0.4) : softCyan.withOpacity(0.4);
+          timeTextColor = isDark ? Colors.lightBlue[300]! : darkCyan;
         } else if (isPlayerEnter) {
           // Player entering - green
           timeContainerColor = isDark ? darkMintGreen.withOpacity(0.2) : mintGreen.withOpacity(0.2);
@@ -345,6 +403,53 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
       );
     } catch (e) {
       return Text('');
+    }
+  }
+  
+  Future<void> _exportToPdf(BuildContext context, AppState appState, List<MatchLogEntry> logs) async {
+    if (logs.isEmpty) return;
+    
+    try {
+      // Show loading indicator
+      setState(() {
+        _isExportingPdf = true;
+      });
+      
+      // Generate the PDF file
+      final pdfFile = await PdfService().generateMatchLogPdf(
+        entries: logs,
+        session: appState.session,
+        isDarkTheme: appState.isDarkTheme,
+      );
+      
+      // Hide loading indicator
+      setState(() {
+        _isExportingPdf = false;
+      });
+      
+      // Navigate to the PDF preview screen
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PdfPreviewScreen(
+            pdfFile: pdfFile,
+            title: '${appState.session.sessionName} - Match Log',
+          ),
+        ),
+      );
+    } catch (e) {
+      // Hide loading indicator
+      setState(() {
+        _isExportingPdf = false;
+      });
+      
+      print('Error exporting to PDF: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error exporting to PDF: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   

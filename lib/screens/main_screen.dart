@@ -10,6 +10,7 @@ import '../services/haptic_service.dart';
 import '../services/background_service.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/period_end_dialog.dart';
+import '../services/translation_service.dart';
 
 class MainScreen extends StatefulWidget {
   @override
@@ -111,14 +112,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
         
         // If the background service is running, stop the background timer and sync the time
         if (_backgroundService.isRunning) {
-          print("App resumed from background, syncing time...");
-          
           // Check if period/match end events were detected in background
           final periodEndOccurred = _backgroundService.periodEndDetected;
           final matchEndOccurred = _backgroundService.matchEndDetected;
           
-          // First sync the time that passed in the background
-          _backgroundService.syncTimeOnResume(appState);
+          // First sync the time that passed in the background and check for match end
+          _checkBackgroundTimeSyncOnResume();
           
           // Wait a short moment to ensure sync is completed
           Future.delayed(Duration(milliseconds: 300), () {
@@ -477,9 +476,65 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
           }
           
           // Check for match end condition
-          if (appState.shouldEndMatch()) {
+          final session = appState.session;
+          final isFinalPeriod = session.currentPeriod == session.matchSegments;
+          if (session.matchRunning && !session.isPaused && 
+              isFinalPeriod && session.enableMatchDuration && 
+              session.matchTime >= session.matchDuration && 
+              !session.isMatchComplete) {
+                
             print("UI Timer detected match end condition");
+            
+            // Ensure the match time is exactly at the match duration for consistency
+            appState.updateMatchTime(session.matchDuration);
+            _updateMatchTime(session.matchDuration, forceUpdate: true);
+            
+            // Debug the state before ending the match
+            print("MATCH END DEBUG: Before endMatch - Time=${session.matchTime}, Duration=${session.matchDuration}, Period=${session.currentPeriod}/${session.matchSegments}, Complete=${session.isMatchComplete}");
+            
             appState.endMatch();
+            
+            // Verify match was correctly ended
+            print("MATCH END DEBUG: After endMatch - isMatchComplete=${appState.session.isMatchComplete}");
+            
+            // Debug the match log entries
+            print("MATCH LOG DEBUG: Current log entries: ${appState.session.matchLog.length}");
+            for (int i = 0; i < appState.session.matchLog.length; i++) {
+              final entry = appState.session.matchLog[i];
+              print("MATCH LOG ENTRY $i: Time=${entry.matchTime}, Details=${entry.details}, Type=${entry.entryType}");
+            }
+            
+            // Sound and haptic feedback
+            _audioService.playWhistle();
+            _hapticService.matchEnd(context);
+            
+            // Show match end notification
+            _showMatchEndNotification();
+            
+            // Show match end dialog
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => PeriodEndDialog(
+                    // Add isMatchEnd parameter to indicate match completion
+                    isMatchEnd: true,
+                    onOk: () {
+                      print("MATCH END DIALOG: Processing OK button click for match end");
+                      final appState = Provider.of<AppState>(context, listen: false);
+                      
+                      // Use the dedicated method to ensure match end is logged
+                      appState.ensureMatchEndLogged();
+                      
+                      // Close the dialog
+                      Navigator.of(context).pop();
+                    },
+                  ),
+                );
+              }
+            });
+            
             _matchTimer?.cancel();
             _matchTimer = null;
             return;
@@ -691,9 +746,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     if (isFinalPeriod && 
         session.enableMatchDuration && 
         session.matchTime >= session.matchDuration && 
-        !session.isMatchComplete) {
+        !session.isMatchComplete &&
+        session.matchRunning) {
       
-      print("PERIOD UI CHECK: Match end condition met in final period, ending match");
+      // Set match time to exactly the match duration for consistency
+      _safeSetState(() {
+        _matchTime = session.matchDuration;
+        _matchTimeNotifier.value = session.matchDuration;
+      });
       
       // End the match
       appState.endMatch();
@@ -711,10 +771,24 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
           showDialog(
             context: context,
             barrierDismissible: false,
-            builder: (context) => PeriodEndDialog(),
+            builder: (context) => PeriodEndDialog(
+              // Add isMatchEnd parameter to indicate match completion
+              isMatchEnd: true,
+              onOk: () {
+                final appState = Provider.of<AppState>(context, listen: false);
+                
+                // Use the dedicated method to ensure match end is logged
+                appState.ensureMatchEndLogged();
+                
+                // Close the dialog
+                Navigator.of(context).pop();
+              },
+            ),
           );
         }
       });
+      
+      return; // Add early return to prevent further checks
     }
     
     // Check for resumed state after period end in background
@@ -758,7 +832,83 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
           showDialog(
             context: context,
             barrierDismissible: false,
-            builder: (context) => PeriodEndDialog(),
+            builder: (context) => PeriodEndDialog(
+              // Add isMatchEnd parameter to indicate match completion
+              isMatchEnd: true,
+              onOk: () {
+                print("MATCH END DIALOG: Processing OK button click for match end");
+                final appState = Provider.of<AppState>(context, listen: false);
+                
+                // Use the dedicated method to ensure match end is logged
+                appState.ensureMatchEndLogged();
+                
+                // Close the dialog
+                Navigator.of(context).pop();
+              },
+            ),
+          );
+        }
+      });
+    }
+    
+    // Special case: Check if we are at the final period and reached match end time but not yet marked complete
+    // This handles the edge case where final period ended but match wasn't marked complete
+    if (isFinalPeriod && 
+        session.enableMatchDuration && 
+        session.matchTime >= session.matchDuration && 
+        !session.isMatchComplete) {
+      
+      print("PERIOD UI CHECK: Match end condition detected during UI check");
+      
+      // Set match time to exactly the match duration for consistency
+      _safeSetState(() {
+        _matchTime = session.matchDuration;
+        _matchTimeNotifier.value = session.matchDuration;
+      });
+      
+      // Debug the state before ending the match
+      print("MATCH END DEBUG: Before endMatch (from check) - Time=${session.matchTime}, Duration=${session.matchDuration}, Period=${session.currentPeriod}/${session.matchSegments}, Complete=${session.isMatchComplete}");
+      
+      // End the match
+      appState.endMatch();
+      
+      // Debug to verify the match end was processed
+      print("MATCH END DEBUG: Match end processed. isMatchComplete=${session.isMatchComplete}");
+      
+      // Debug the match log entries
+      print("MATCH LOG DEBUG: Current log entries: ${session.matchLog.length}");
+      for (int i = 0; i < session.matchLog.length; i++) {
+        final entry = session.matchLog[i];
+        print("MATCH LOG ENTRY $i: Time=${entry.matchTime}, Details=${entry.details}, Type=${entry.entryType}");
+      }
+      
+      // Sound and haptic feedback
+      _audioService.playWhistle();
+      _hapticService.matchEnd(context);
+      
+      // Show match end notification
+      _showMatchEndNotification();
+      
+      // Show match end dialog
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => PeriodEndDialog(
+              // Add isMatchEnd parameter to indicate match completion
+              isMatchEnd: true,
+              onOk: () {
+                print("MATCH END DIALOG: Processing OK button click for match end");
+                final appState = Provider.of<AppState>(context, listen: false);
+                
+                // Use the dedicated method to ensure match end is logged
+                appState.ensureMatchEndLogged();
+                
+                // Close the dialog
+                Navigator.of(context).pop();
+              },
+            ),
           );
         }
       });
@@ -2695,6 +2845,85 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       // Add whistle button on the left side
       floatingActionButtonAnimator: FloatingActionButtonAnimator.scaling,
     );
+  }
+
+  void _checkBackgroundTimeSyncOnResume() {
+    if (_backgroundService.isRunning) {
+      print("App resumed from background, syncing time...");
+      
+      final appState = Provider.of<AppState>(context, listen: false);
+      
+      // Sync the time from background
+      _backgroundService.syncTimeOnResume(appState);
+      
+      print("After sync, match time is now: ${appState.session.matchTime}");
+      
+      // Check if a period end was detected in background
+      if (_backgroundService.periodEndDetected) {
+        print("Period end was detected while in background");
+        
+        // Reset the flags after handling
+        _backgroundService.resetEventFlags();
+      }
+      
+      // Check if match end was detected in background
+      if (_backgroundService.matchEndDetected) {
+        print("Match end was detected while in background");
+        
+        // Reset the flags after handling
+        _backgroundService.resetEventFlags();
+      }
+      
+      // Extra check for match end condition
+      final session = appState.session;
+      final isFinalPeriod = session.currentPeriod == session.matchSegments;
+      
+      if (isFinalPeriod && 
+          session.enableMatchDuration && 
+          session.matchTime >= session.matchDuration && 
+          !session.isMatchComplete) {
+        
+        print("Match end condition detected on resume");
+        
+        // Set match time to exactly match duration
+        session.matchTime = session.matchDuration;
+        
+        // End the match
+        appState.endMatch();
+        
+        // Sound and haptic feedback if settings allow
+        if (session.enableSound) {
+          _audioService.playWhistle();
+        }
+        _hapticService.matchEnd(context);
+        
+        // Show end notification
+        _showMatchEndNotification();
+        
+        // Show dialog
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (context) => PeriodEndDialog(
+                // Add isMatchEnd parameter to indicate match completion
+                isMatchEnd: true,
+                onOk: () {
+                  final appState = Provider.of<AppState>(context, listen: false);
+                  
+                  // Use the dedicated method to ensure match end is logged
+                  appState.ensureMatchEndLogged();
+                  
+                  // Close the dialog
+                  Navigator.of(context).pop();
+                },
+              ),
+            );
+          }
+        });
+      }
+    }
   }
 }
 

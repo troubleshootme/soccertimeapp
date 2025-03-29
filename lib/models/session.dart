@@ -35,6 +35,9 @@ class Session extends ChangeNotifier {
   bool isMatchComplete = false;
   bool isSetup = true;  // New flag for setup mode
   
+  // Track if match end was logged properly
+  bool matchEndLogged = false;
+  
   // Team goals
   int teamGoals = 0;
   int opponentGoals = 0;

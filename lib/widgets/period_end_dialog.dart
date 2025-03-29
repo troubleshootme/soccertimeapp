@@ -7,8 +7,17 @@ class PeriodEndDialog extends StatelessWidget {
   // Add callback for next period transition
   final VoidCallback? onNextPeriod;
   
+  // Add flag to indicate match end and callback for OK button
+  final bool isMatchEnd;
+  final VoidCallback? onOk;
+  
   // Remove const constructor to avoid widget identity issues
-  PeriodEndDialog({Key? key, this.onNextPeriod}) : super(key: key);
+  PeriodEndDialog({
+    Key? key, 
+    this.onNextPeriod,
+    this.isMatchEnd = false,
+    this.onOk,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -16,7 +25,9 @@ class PeriodEndDialog extends StatelessWidget {
       final appState = Provider.of<AppState>(context, listen: false); // Use listen: false to prevent unnecessary rebuilds
       final currentPeriod = appState.session.currentPeriod;
       final totalPeriods = appState.session.matchSegments;
-      final isGameOver = currentPeriod >= totalPeriods;
+      
+      // Use explicit isMatchEnd parameter if provided, otherwise check if we're at the end
+      final isGameOver = isMatchEnd || currentPeriod >= totalPeriods;
       
       // Determine period name (Quarter/Half)
       final periodName = totalPeriods == 2 ? 'Half' : 'Quarter';
@@ -152,8 +163,13 @@ class PeriodEndDialog extends StatelessWidget {
             if (isGameOver) // Only show OK button if game is over
               ElevatedButton(
                 onPressed: () {
-                  // Just dismiss the dialog, main screen will handle state
-                  Navigator.of(context).pop();
+                  // Use the provided onOk callback if available
+                  if (onOk != null) {
+                    onOk!();
+                  } else {
+                    // Just dismiss the dialog, main screen will handle state
+                    Navigator.of(context).pop();
+                  }
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blue,

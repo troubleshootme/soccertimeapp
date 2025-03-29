@@ -563,15 +563,34 @@ class AppState with ChangeNotifier {
       return;
     }
     
+    // Calculate period information
+    final isFinalPeriod = _session.currentPeriod == _session.matchSegments;
+    final periodDuration = _session.matchDuration ~/ _session.matchSegments;
+    final exactPeriodEndTime = periodDuration * _session.currentPeriod;
+    
+    // If we're in the final period and this is also the match end time, end the match
+    if (isFinalPeriod && exactPeriodEndTime == _session.matchDuration) {
+      print("Final period has ended, ending match instead");
+      
+      // Set the match time exactly to match duration for consistency
+      _session.matchTime = _session.matchDuration;
+      
+      // End the match instead of just the period
+      endMatch();
+      
+      // Save session state
+      await saveSession();
+      
+      // Notify listeners
+      notifyListeners();
+      return;
+    }
+    
     // Mark that the whistle has played
     _session.hasWhistlePlayed = true;
-    
-    // Calculate the end time for the current period *before* pausing
-    final periodDuration = _session.matchDuration ~/ _session.matchSegments;
-    final currentPeriodEndTime = periodDuration * _session.currentPeriod;
 
     // Set the match time to exactly the end time of the current period for accuracy
-    _session.matchTime = currentPeriodEndTime; 
+    _session.matchTime = exactPeriodEndTime; 
     print("Set match time EXACTLY to period end time: ${_session.matchTime}");
 
     // *** Force UI update for the exact time FIRST ***
@@ -582,7 +601,7 @@ class AppState with ChangeNotifier {
     // Pause the match (if running) AFTER setting the final time
     if (_session.matchRunning) {
       // Pass the exact end time to pauseMatch if it needs it
-      await pauseMatch(exactEndTime: currentPeriodEndTime); 
+      await pauseMatch(exactEndTime: exactPeriodEndTime); 
     }
     
     // We no longer log the period end event - only log period starts
@@ -1328,17 +1347,13 @@ class AppState with ChangeNotifier {
 
   // Add the missing endMatch method definition correctly
   void endMatch() {
-    print("endMatch called - final period=${session.currentPeriod}, segments=${session.matchSegments}");
-    
     // Guard clause - only end match in final period
     if (session.currentPeriod < session.matchSegments) {
-      print("WARNING: Attempted to end match before final period");
       return;
     }
     
     // Only proceed if match is not already marked complete
     if (session.isMatchComplete) {
-      print("Match already marked as complete");
       return;
     }
     
@@ -1370,10 +1385,14 @@ class AppState with ChangeNotifier {
       }
     }
     
-    // Log match end
-    logMatchEvent("Match Complete", entryType: 'match_end');
+    // Get the final score
+    final score = "${session.teamGoals}-${session.opponentGoals}";
     
-    print("Match marked as complete at time ${session.matchTime}");
+    // Log match end with proper translation and score
+    logMatchEvent("${TranslationService().get('match.match_complete')} (Final Score: $score)", entryType: 'match_end');
+    
+    // Mark that we've properly logged the match end
+    session.matchEndLogged = true;
     
     notifyListeners();
   }
@@ -1381,16 +1400,18 @@ class AppState with ChangeNotifier {
   // Add the missing shouldEndMatch method definition correctly
   bool shouldEndMatch() {
     if (!session.enableMatchDuration) return false;
+    
     // Match should end if time reaches duration AND we are in the final period
     final isFinalPeriod = session.currentPeriod == session.matchSegments;
-    return isFinalPeriod && session.matchTime >= session.matchDuration && !session.isMatchComplete;
+    final shouldEnd = isFinalPeriod && session.matchTime >= session.matchDuration && !session.isMatchComplete;
+    
+    return shouldEnd;
   }
 
   // New method specifically for background sync adjustment
   void updatePlayerTimesForBackgroundSync(int elapsedInBackgroundSeconds) {
     if (elapsedInBackgroundSeconds <= 0) return;
 
-    print('AppState: Applying background sync delta of $elapsedInBackgroundSeconds s to active players');
     bool changed = false;
     
     // Calculate new match time
@@ -1406,7 +1427,6 @@ class AppState with ChangeNotifier {
          if (timeToAdd > 0) {
            player.totalTime += timeToAdd;
            player.lastActiveMatchTime = newMatchTime;
-           print('  Player $playerName: ${oldTime} -> ${player.totalTime} (+$timeToAdd)');
            changed = true;
          }
       }
@@ -1417,6 +1437,25 @@ class AppState with ChangeNotifier {
     
     if (changed) {
         notifyListeners(); // Notify if any player times were updated
+    }
+  }
+
+  // New method to ensure match completion is properly logged
+  void ensureMatchEndLogged() {
+    // Only proceed if match is already marked as complete but not yet logged
+    if (session.isMatchComplete && !session.matchEndLogged) {
+      // Get the final score
+      final score = "${session.teamGoals}-${session.opponentGoals}";
+      
+      // Log match end with proper translation and score
+      logMatchEvent("${TranslationService().get('match.match_complete')} (Final Score: $score)", entryType: 'match_end');
+      
+      // Mark that we've properly logged the match end
+      session.matchEndLogged = true;
+      
+      // Save the session to persist the log entry
+      saveSession();
+      notifyListeners();
     }
   }
 

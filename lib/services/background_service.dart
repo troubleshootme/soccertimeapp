@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:vibration/vibration.dart';
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import '../providers/app_state.dart';
+import 'package:meta/meta.dart';
 
 @pragma('vm:entry-point')
 class BackgroundService {

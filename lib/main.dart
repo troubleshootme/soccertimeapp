@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'hive_database.dart';
 import 'dart:async';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'services/translation_service.dart';
 import 'services/background_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/foundation.dart';

@@ -10,6 +10,7 @@ import '../services/haptic_service.dart';
 import '../services/background_service.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/period_end_dialog.dart';
+import '../services/translation_service.dart';
 
 class MainScreen extends StatefulWidget {
   @override
@@ -30,13 +31,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   late HapticService _hapticService;
   final BackgroundService _backgroundService = BackgroundService();
   
-  // Timer sync variables
-  int? _lastRealTimeCheck;
-  int? _initialStartTime;
-  int _accumulatedDrift = 0;
-  bool _isUpdatingTime = false;
-  bool _needsUIUpdate = false;
-  
   // Animation controller for pulsing add button
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
@@ -46,7 +40,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
 
   // Add these variables at the class level
   int? _lastUpdateTimestamp;
+  bool _isUpdatingTime = false;
+
+  // Add class variables for drift compensation
+  int? _initialStartTime;
+  int? _lastRealTimeCheck;
+  double _accumulatedDrift = 0.0;  // Change to double
   
+  // Add this variable to track if UI needs update
+  bool _needsUIUpdate = false;
   DateTime _lastUIUpdate = DateTime.now();
 
   @override
@@ -346,29 +348,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
 
   @override
   void dispose() {
-    // Unregister observer
+    // Remove the lifecycle observer
     WidgetsBinding.instance.removeObserver(this);
     
-    // Cancel timer before disposing
-    if (_matchTimer != null) {
-      _matchTimer!.cancel();
-      _matchTimer = null;
-    }
-    _addPlayerFocusNode.dispose();
-    
-    // Dispose the animation controller
+    // Clean up timers and controllers
     _pulseController.dispose();
-    
-    // Dispose the audio service
-    _audioService.dispose();
-    
-    // Dispose the background service
-    _backgroundService.dispose();
-    
-    _lastUpdateTimestamp = null;
-    
-    _matchTimeNotifier.dispose();
-    
+    _matchTimer?.cancel();
+    _addPlayerFocusNode.dispose();
     super.dispose();
   }
 
@@ -971,6 +957,91 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     if (number == 2) return '2nd';
     if (number == 3) return '3rd';
     return '${number}th';
+  }
+
+  void _showStartNextPeriodDialog() {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final isDark = appState.isDarkTheme;
+    
+    // Play period end haptic feedback
+    _hapticService.periodEnd(context);
+    
+    // Get the period that just ended (current period - 1) and the next period number
+    final justEndedPeriod = appState.session.currentPeriod - 1;  // The period that just ended
+    final nextPeriod = appState.session.currentPeriod;  // The next period (already incremented by endPeriod)
+    final isQuarters = appState.session.matchSegments == 4;
+    
+    // Helper function to get period suffix (1st, 2nd, 3rd, 4th)
+    String getPeriodSuffix(int period) {
+      if (period == 1) return '1st';
+      if (period == 2) return '2nd';
+      if (period == 3) return '3rd';
+      return '${period}th';
+    }
+    
+    // Get the period names based on whether it's halves or quarters
+    final endedPeriodText = isQuarters 
+        ? '${getPeriodSuffix(justEndedPeriod)} Quarter'
+        : '${getPeriodSuffix(justEndedPeriod)} Half';
+    
+    final nextPeriodText = isQuarters 
+        ? '${getPeriodSuffix(nextPeriod)} Quarter'
+        : '${getPeriodSuffix(nextPeriod)} Half';
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+        title: Text(
+          '$endedPeriodText ended',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.bold,
+            color: isDark ? Colors.white : Colors.black87,
+          ),
+        ),
+        content: Text(
+          'Start $nextPeriodText?',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.w500,
+            color: isDark ? Colors.white70 : Colors.black87,
+          ),
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          ElevatedButton(
+            onPressed: () async {
+              await appState.startNextPeriod();
+              Navigator.of(context).pop();
+              // Restart the timer after the period transition
+              _startMatchTimer();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade600,
+              padding: EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+              textStyle: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            child: Text('Start'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Add this method to handle period transitions
+  void _handlePeriodTransition() {
+    final appState = Provider.of<AppState>(context, listen: false);
+    
+    // Cancel any existing timer
+    _matchTimer?.cancel();
+    _matchTimer = null;
+    
+    // Start a new timer
+    _startMatchTimer();
   }
 
   bool _hasActivePlayer() {
@@ -1892,57 +1963,35 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Provider.of<AppState>(context).isDarkTheme;
     final appState = Provider.of<AppState>(context);
-    final isDark = appState.isDarkTheme;
+    final bool isInPeriodTransition = appState.periodsTransitioning;
     
-    // Update session name reference
-    _sessionName = appState.session.sessionName;
-    
-    // Check for full data initialization
-    if (!_isInitialized) {
-      _isInitialized = true;
+    // Ensure local pause state stays in sync with session state
+    if (_isPaused != appState.session.isPaused) {
+      // Don't call setState during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _safeSetState(() {
+          _isPaused = appState.session.isPaused;
+        });
+      });
     }
     
+    // Update animation state based on player count
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final hasPlayers = appState.players.isNotEmpty;
+      if (hasPlayers && _pulseController.isAnimating) {
+        _pulseController.stop();
+      } else if (!hasPlayers && !_pulseController.isAnimating) {
+        _pulseController.repeat(reverse: true);
+      }
+    });
+    
     return PopScope(
-      // Prevent back gesture when match is running
-      canPop: !(appState.session.matchRunning && !appState.session.isPaused),
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (!didPop) {
-          // Match is running - show confirmation dialog
-          final shouldPop = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: Text('Match In Progress'),
-              content: Text('Are you sure you want to exit? The current match will be paused.'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    // Pause the match before allowing exit
-                    final appState = Provider.of<AppState>(context, listen: false);
-                    if (appState.session.matchRunning && !appState.session.isPaused) {
-                      appState.session.isPaused = true;
-                      
-                      // Stop the timer
-                      _matchTimer?.cancel();
-                      _matchTimer = null;
-                      
-                      // Update state
-                      setState(() {
-                        _isPaused = true;
-                      });
-                    }
-                    Navigator.of(context).pop(true);
-                  },
-                  child: Text('Exit'),
-                ),
-              ],
-            ),
-          ) ?? false;
-          
+          final shouldPop = await _showExitWarning();
           if (shouldPop) {
             Navigator.of(context).pop();
           }
@@ -2083,7 +2132,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                                                 : (_hasActivePlayer() 
                                                     ? Colors.green  // Green when running
                                                     : Colors.red)),  // Red when stopped
-                                          letterSpacing: 2.0,
+                                            letterSpacing: 2.0,
                                         ),
                                       );
                                     },
@@ -2785,6 +2834,54 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       ),
     );
   }
+  
+  Future<bool> _showExitWarning() async {
+    final isDark = Provider.of<AppState>(context, listen: false).isDarkTheme;
+    
+    return await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+        title: Text(
+          'Exit Match?',
+          style: TextStyle(
+            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+          ),
+        ),
+        content: Text(
+          'If you exit, all session timers will be reset. Are you sure you want to exit?',
+          style: TextStyle(
+            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(
+              'Exit',
+              style: TextStyle(
+                color: Colors.red,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ) ?? false; // Default to false if dialog is dismissed
+  }
 
   void _checkBackgroundTimeSyncOnResume() {
     if (_backgroundService.isRunning) {
@@ -2863,6 +2960,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
         });
       }
     }
+  }
+
+  void _startNextPeriod() {
+    final appState = Provider.of<AppState>(context, listen: false);
+    appState.startNextPeriod();
   }
 }
 

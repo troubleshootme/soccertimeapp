@@ -6,6 +6,7 @@ import '../services/translation_service.dart';
 import 'dart:async';
 import 'package:vibration/vibration.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter/services.dart';
 import '../models/match_log_entry.dart';
 
 class AppState with ChangeNotifier {
@@ -790,6 +791,8 @@ class AppState with ChangeNotifier {
     if (_currentSessionId != null) {
       final playerIndex = _players.indexWhere((p) => p['name'] == oldName);
       if (playerIndex != -1) {
+        // Use the player's ID to update the name
+        final playerId = _players[playerIndex]['id'] as int;
         // We should have a renamePlayer method in database, but for now
         // just update the local list
         _players[playerIndex]['name'] = trimmedNewName;
@@ -1419,6 +1422,7 @@ class AppState with ChangeNotifier {
       // Update players who were marked as active *before* the app went to background
       // OR who are currently marked active (if sync happens before UI fully restores state)
       if ((player.active || session.activeBeforePause.contains(playerName)) && player.lastActiveMatchTime != null) {
+         final oldTime = player.totalTime;
          final timeToAdd = newMatchTime - player.lastActiveMatchTime!;
          if (timeToAdd > 0) {
            player.totalTime += timeToAdd;

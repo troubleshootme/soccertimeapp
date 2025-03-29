@@ -16,6 +16,9 @@ class PdfService {
   factory PdfService() => _instance;
   PdfService._internal();
 
+  // Cache for icons
+  final Map<String, pw.MemoryImage> _iconCache = {};
+
   // Format the timestamp in a friendly format (Month Day, Year)
   Map<String, String> _formatTimestampParts(String timestamp) {
     try {
@@ -48,6 +51,7 @@ class PdfService {
     final headerBorderColor = PdfColors.grey600;
     final textColor = PdfColors.black;
     final headerTextColor = PdfColors.black;
+    final iconColor = PdfColors.black;
     
     // Define event types with printer-friendly border colors
     final matchEventBorderColor = PdfColors.lightBlue;

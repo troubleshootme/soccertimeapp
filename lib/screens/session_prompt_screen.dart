@@ -26,67 +26,78 @@ class _SessionPromptScreenState extends State<SessionPromptScreen> {
   Widget build(BuildContext context) {
     final isDark = Provider.of<AppState>(context).isDarkTheme;
     
-    return Scaffold(
-      backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
-      appBar: AppBar(
-        title: const Text('SoccerTimeApp'),
-        backgroundColor: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
-        actions: [
-          IconButton(
-            icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
-            onPressed: () => Provider.of<AppState>(context, listen: false).toggleTheme(),
-          ),
-        ],
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Image.asset(
-              'assets/images/icon-512x512.png',
-              width: 150,
-              height: 150,
-              errorBuilder: (context, error, stackTrace) {
-                return Icon(
-                  Icons.sports_soccer,
-                  size: 150,
-                  color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
-                );
-              },
-            ),
-            SizedBox(height: 24),
-            Text(
-              'Welcome to SoccerTimeApp',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: isDark ? AppThemes.darkText : AppThemes.lightText,
-              ),
-            ),
-            SizedBox(height: 8),
-            Text(
-              'Track player times with ease',
-              style: TextStyle(
-                fontSize: 16,
-                color: isDark 
-                  ? AppThemes.darkText.withValues(alpha: 179) 
-                  : AppThemes.lightText.withValues(alpha: 179),
-              ),
-            ),
-            SizedBox(height: 32),
-            ElevatedButton(
-              onPressed: () => _showSessionDialog(),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
-                padding: EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: Text(
-                'Open Sessions',
-                style: TextStyle(fontSize: 18),
-              ),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (!didPop) {
+          final shouldExit = await _showExitConfirmationDialog();
+          if (shouldExit) {
+            Navigator.of(context).pop();
+          }
+        }
+      },
+      child: Scaffold(
+        backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
+        appBar: AppBar(
+          title: const Text('SoccerTimeApp'),
+          backgroundColor: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
+          actions: [
+            IconButton(
+              icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+              onPressed: () => Provider.of<AppState>(context, listen: false).toggleTheme(),
             ),
           ],
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Image.asset(
+                'assets/images/icon-512x512.png',
+                width: 150,
+                height: 150,
+                errorBuilder: (context, error, stackTrace) {
+                  return Icon(
+                    Icons.sports_soccer,
+                    size: 150,
+                    color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                  );
+                },
+              ),
+              SizedBox(height: 24),
+              Text(
+                'Welcome to SoccerTimeApp',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? AppThemes.darkText : AppThemes.lightText,
+                ),
+              ),
+              SizedBox(height: 8),
+              Text(
+                'Track player times with ease',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: isDark 
+                    ? AppThemes.darkText.withValues(alpha: 179) 
+                    : AppThemes.lightText.withValues(alpha: 179),
+                ),
+              ),
+              SizedBox(height: 32),
+              ElevatedButton(
+                onPressed: () => _showSessionDialog(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                  padding: EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: Text(
+                  'Open Sessions',
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -155,5 +166,52 @@ class _SessionPromptScreenState extends State<SessionPromptScreen> {
         ),
       );
     });
+  }
+
+  Future<bool> _showExitConfirmationDialog() async {
+    final isDark = Provider.of<AppState>(context, listen: false).isDarkTheme;
+    
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+        title: Text(
+          'Exit App?',
+          style: TextStyle(
+            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to exit the app?',
+          style: TextStyle(
+            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              'Exit',
+              style: TextStyle(
+                color: Colors.red,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ) ?? false;
   }
 }

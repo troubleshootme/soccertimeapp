@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../screens/match_log_screen.dart';
 import '../providers/app_state.dart';
-import '../services/file_service.dart';
 import '../utils/app_themes.dart';
 
 class SettingsScreen extends StatefulWidget {

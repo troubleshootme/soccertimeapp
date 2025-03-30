@@ -12,6 +12,22 @@ import '../services/pdf_service.dart';
 import 'pdf_preview_screen.dart';
 
 class MatchLogScreen extends StatefulWidget {
+  final bool isHistory;
+  final List<Map<String, dynamic>>? historyMatchLog;
+  final String? historySessionName;
+  final int? teamGoals;
+  final int? opponentGoals;
+  final DateTime? timestamp;
+  
+  MatchLogScreen({
+    this.isHistory = false,
+    this.historyMatchLog,
+    this.historySessionName,
+    this.teamGoals,
+    this.opponentGoals,
+    this.timestamp,
+  });
+  
   @override
   _MatchLogScreenState createState() => _MatchLogScreenState();
 }
@@ -19,22 +35,64 @@ class MatchLogScreen extends StatefulWidget {
 class _MatchLogScreenState extends State<MatchLogScreen> {
   bool _isAscendingOrder = true; // Default to ascending (match time order)
   bool _isExportingPdf = false;
+  List<MatchLogEntry> _historyLogs = [];
+  int _teamGoals = 0;
+  int _opponentGoals = 0;
+  
+  @override
+  void initState() {
+    super.initState();
+    // Initialize scores from widget parameters if provided
+    if (widget.teamGoals != null) {
+      _teamGoals = widget.teamGoals!;
+    }
+    if (widget.opponentGoals != null) {
+      _opponentGoals = widget.opponentGoals!;
+    }
+    _processHistoryData();
+  }
+  
+  void _processHistoryData() {
+    if (!widget.isHistory || widget.historyMatchLog == null) return;
+    
+    setState(() {
+      _historyLogs = widget.historyMatchLog!.map((entry) {
+        return MatchLogEntry.fromJson(entry);
+      }).toList();
+    });
+  }
   
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
     final isDark = appState.isDarkTheme;
     
-    // Get logs based on sort order
-    final logs = _isAscendingOrder 
-        ? appState.session.getSortedMatchLogAscending()
-        : appState.session.getSortedMatchLog();
+    // Get logs based on sort order and data source
+    List<MatchLogEntry> logs;
+    
+    if (widget.isHistory) {
+      // Sort historical logs
+      if (_isAscendingOrder) {
+        logs = List.from(_historyLogs)..sort((a, b) => a.seconds.compareTo(b.seconds));
+      } else {
+        logs = List.from(_historyLogs)..sort((a, b) => b.seconds.compareTo(a.seconds));
+      }
+    } else {
+      // Get current logs from app state
+      logs = _isAscendingOrder 
+          ? appState.session.getSortedMatchLogAscending()
+          : appState.session.getSortedMatchLog();
+    }
+    
+    final title = widget.isHistory 
+        ? 'Match Log: ${widget.historySessionName ?? "History"}'
+        : context.tr('log.match_log');
     
     return Scaffold(
       backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
       appBar: AppBar(
         backgroundColor: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
-        title: Text(context.tr('log.match_log')),
+        title: Text(title),
         actions: [
           // Sort order toggle
           IconButton(
@@ -57,7 +115,7 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
             IconButton(
               icon: Icon(Icons.share),
               tooltip: 'Share Match Log',
-              onPressed: () => _shareMatchLog(context, appState),
+              onPressed: () => _shareMatchLog(context, appState, logs),
             ),
           ],
         ],
@@ -99,7 +157,7 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
       floatingActionButton: FloatingActionButton(
         backgroundColor: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
         onPressed: () => Navigator.pop(context),
-        child: Icon(Icons.close),
+        child: Icon(Icons.close, color: Colors.white),
       ),
     );
   }
@@ -243,7 +301,7 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
                     child: SvgPicture.asset(
                       'assets/images/white_whistle.svg',
                       colorFilter: ColorFilter.mode(
-                        Colors.white,
+                        isDark ? Colors.white : Colors.blueGrey.shade700,
                         BlendMode.srcIn
                       ),
                     ),
@@ -256,7 +314,7 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
                     child: SvgPicture.asset(
                       'assets/images/arrow_player_enter.svg',
                       colorFilter: ColorFilter.mode(
-                        Colors.white,
+                        isDark ? Colors.white : darkMintGreen,
                         BlendMode.srcIn
                       ),
                     ),
@@ -269,7 +327,7 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
                     child: SvgPicture.asset(
                       'assets/images/arrow_player_left.svg',
                       colorFilter: ColorFilter.mode(
-                        Colors.white,
+                        isDark ? Colors.white : darkRed,
                         BlendMode.srcIn
                       ),
                     ),
@@ -415,11 +473,32 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
         _isExportingPdf = true;
       });
       
+      // Get session name - use widget's history name if in history mode
+      final sessionName = widget.isHistory 
+          ? widget.historySessionName ?? 'Session History'
+          : appState.session.sessionName;
+      
+      // Use the history scores if viewing history, otherwise use current session scores
+      final teamGoals = widget.isHistory ? _teamGoals : appState.session.teamGoals;
+      final opponentGoals = widget.isHistory ? _opponentGoals : appState.session.opponentGoals;
+      
+      // Get the timestamp - use widget's timestamp if provided, otherwise try to extract from name
+      DateTime? timestamp = widget.timestamp;
+      if (timestamp == null && widget.isHistory && widget.historySessionName != null) {
+        timestamp = _extractDateFromHistoryName(widget.historySessionName!);
+      }
+      
+      print('Using timestamp for PDF: ${timestamp?.toString() ?? 'Current time'}');
+      
       // Generate the PDF file
       final pdfFile = await PdfService().generateMatchLogPdf(
         entries: logs,
         session: appState.session,
         isDarkTheme: appState.isDarkTheme,
+        sessionName: sessionName,
+        teamGoals: teamGoals,
+        opponentGoals: opponentGoals,
+        timestamp: timestamp,
       );
       
       // Hide loading indicator
@@ -433,7 +512,7 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
         MaterialPageRoute(
           builder: (context) => PdfPreviewScreen(
             pdfFile: pdfFile,
-            title: '${appState.session.sessionName} - Match Log',
+            title: 'Match Log',
           ),
         ),
       );
@@ -453,19 +532,80 @@ class _MatchLogScreenState extends State<MatchLogScreen> {
     }
   }
   
-  // Share the match log as text
-  void _shareMatchLog(BuildContext context, AppState appState) {
-    final logText = appState.exportMatchLogToText();
-    
-    if (logText.isNotEmpty) {
-      Share.share(
-        logText,
-        subject: 'Match Log: ${appState.session.sessionName}',
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No match events to share')),
-      );
+  // Helper method to extract date from history name format like "Title - MM/DD/YYYY h:mm a"
+  DateTime? _extractDateFromHistoryName(String historyName) {
+    try {
+      // First check for the timestamp pattern with dash: "- MM/DD/YYYY h:mm a"
+      final dateRegex = RegExp(r'(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}\s*[ap]m)', caseSensitive: false);
+      final match = dateRegex.firstMatch(historyName);
+      
+      if (match != null && match.group(1) != null) {
+        final dateStr = match.group(1)!;
+        // Parse with DateFormat from intl package
+        return DateFormat('MM/dd/yyyy h:mm a').parse(dateStr);
+      }
+      
+      // Also check for date with score pattern: MM/DD/YYYY (0-0)
+      final dateScoreRegex = RegExp(r'(\d{1,2}/\d{1,2}/\d{4})\s*\(\d+-\d+\)', caseSensitive: false);
+      final dateScoreMatch = dateScoreRegex.firstMatch(historyName);
+      
+      if (dateScoreMatch != null && dateScoreMatch.group(1) != null) {
+        final dateStr = dateScoreMatch.group(1)!;
+        // Parse with DateFormat from intl package
+        return DateFormat('MM/dd/yyyy').parse(dateStr);
+      }
+      
+      // Simple date format
+      final simpleDateRegex = RegExp(r'(\d{1,2}/\d{1,2}/\d{4})', caseSensitive: false);
+      final simpleDateMatch = simpleDateRegex.firstMatch(historyName);
+      
+      if (simpleDateMatch != null && simpleDateMatch.group(1) != null) {
+        final dateStr = simpleDateMatch.group(1)!;
+        // Parse with DateFormat from intl package
+        return DateFormat('MM/dd/yyyy').parse(dateStr);
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error extracting date from history name: $e');
+      return null;
     }
+  }
+  
+  // Update the share method to work with history logs
+  void _shareMatchLog(BuildContext context, AppState appState, [List<MatchLogEntry>? customLogs]) async {
+    String text;
+    
+    if (widget.isHistory && customLogs != null) {
+      // Generate export text for history data
+      final buffer = StringBuffer();
+      
+      // Add session name and score as header
+      buffer.writeln('MATCH LOG: ${widget.historySessionName ?? "Match History"}');
+      buffer.writeln('SCORE: $_teamGoals - $_opponentGoals');
+      buffer.writeln('----------------------------------------');
+      buffer.writeln();
+      
+      // Add log entries in chronological order (oldest first)
+      final entries = List<MatchLogEntry>.from(customLogs)..sort((a, b) => a.seconds.compareTo(b.seconds));
+      
+      for (var entry in entries) {
+        // Format: [Time] Event details
+        if (entry.entryType?.toLowerCase() == 'period_transition') {
+          // Simple emphasis for period transitions
+          buffer.writeln('[${entry.matchTime}] * ${entry.details} *');
+        } else {
+          buffer.writeln('[${entry.matchTime}] ${entry.details}');
+        }
+      }
+      
+      text = buffer.toString();
+    } else {
+      // Use app state's export function for current session
+      text = appState.exportMatchLogToText();
+    }
+    
+    // Share the text
+    await Share.share(text, subject: 'Soccer Time Match Log');
   }
 }

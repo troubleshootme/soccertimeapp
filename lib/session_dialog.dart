@@ -77,7 +77,7 @@ class _SessionDialogState extends State<SessionDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Soccer Time App', 
+              'SoccerTimeApp', 
               style: TextStyle(
                 fontSize: 24, 
                 fontWeight: FontWeight.bold,
@@ -292,7 +292,7 @@ class _SessionDialogState extends State<SessionDialog> {
                     child: Text(
                       'Cancel',
                       style: TextStyle(
-                        color: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
+                        color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
                         letterSpacing: 1.0,
                       ),
                     )
@@ -395,7 +395,7 @@ class _SessionDialogState extends State<SessionDialog> {
             child: Text(
               'Cancel',
               style: TextStyle(
-                color: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
+                color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
                 letterSpacing: 1.0,
               ),
             ),
@@ -485,13 +485,28 @@ class _SessionDialogState extends State<SessionDialog> {
                   fontSize: 12,
                 ),
               ),
-              trailing: IconButton(
-                icon: Icon(
-                  Icons.delete,
-                  color: Colors.red.shade300,
-                  size: 20,
-                ),
-                onPressed: () => _showDeleteSessionDialog(context, session),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // History button
+                  IconButton(
+                    icon: Icon(
+                      Icons.history,
+                      color: isDark ? Colors.white70 : AppThemes.lightSecondaryBlue.withOpacity(0.7),
+                      size: 20,
+                    ),
+                    onPressed: () => _navigateToSessionHistory(context, session),
+                  ),
+                  // Delete button
+                  IconButton(
+                    icon: Icon(
+                      Icons.delete,
+                      color: Colors.red.shade300,
+                      size: 20,
+                    ),
+                    onPressed: () => _showDeleteSessionDialog(context, session),
+                  ),
+                ],
               ),
               onTap: () {
                 print('Selected session: ID=$sessionId, Name="$sessionName"');
@@ -530,7 +545,7 @@ class _SessionDialogState extends State<SessionDialog> {
             child: Text(
               'Cancel',
               style: TextStyle(
-                color: isDark ? AppThemes.darkSecondaryBlue.withOpacity(0.3) : AppThemes.lightSecondaryBlue.withOpacity(0.3),
+                color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
               ),
             ),
           ),
@@ -566,7 +581,7 @@ class _SessionDialogState extends State<SessionDialog> {
       
       if (filePath != null) {
         print('Backup successful to: $filePath');
-        BackupManager().showBackupSuccess(context, filePath);
+        // Dialog is already shown in BackupManager.backupSessions()
       } else {
         print('Backup returned null path');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -666,5 +681,21 @@ class _SessionDialogState extends State<SessionDialog> {
         ),
       );
     }
+  }
+
+  // Add this method to navigate to session history screen
+  void _navigateToSessionHistory(BuildContext context, Map<String, dynamic> session) {
+    final sessionId = session['id'];
+    if (sessionId == null) return;
+    
+    Navigator.pop(context); // Close the session dialog
+    Navigator.pushNamed(
+      context, 
+      '/session_history',
+      arguments: {
+        'sessionId': sessionId,
+        'sessionName': session['name'] ?? 'Session $sessionId',
+      },
+    );
   }
 }

@@ -6,6 +6,7 @@ import 'screens/session_prompt_screen.dart';
 import 'providers/app_state.dart';
 import 'screens/main_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/session_history_screen.dart';
 import 'utils/app_themes.dart';
 import 'package:path_provider/path_provider.dart';
 import 'hive_database.dart';
@@ -222,6 +223,69 @@ class _ErrorBoundaryWidgetState extends State<ErrorBoundaryWidget> {
   }
 }
 
+class InitializationErrorScreen extends StatelessWidget {
+  final String errorMessage;
+  
+  InitializationErrorScreen({required this.errorMessage});
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Initialization Error'),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.error_outline,
+                color: Colors.red,
+                size: 64,
+              ),
+              SizedBox(height: 16),
+              Text(
+                'There was an error initializing the app:',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 8),
+              Text(
+                errorMessage,
+                style: TextStyle(fontSize: 16),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () {
+                  // Attempt to initialize Hive again
+                  HiveSessionDatabase.instance.init().then((_) {
+                    Navigator.pushReplacementNamed(context, '/');
+                  }).catchError((e) {
+                    // Show error again
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Initialization failed: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  });
+                },
+                child: Text('Try Again'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class SoccerTimeApp extends StatefulWidget {
   @override
   _SoccerTimeAppState createState() => _SoccerTimeAppState();
@@ -276,7 +340,7 @@ class _SoccerTimeAppState extends State<SoccerTimeApp> with WidgetsBindingObserv
       child: Consumer<AppState>(
         builder: (context, appState, child) {
           return MaterialApp(
-            title: 'Soccer Time App',
+            title: 'SoccerTimeApp',
             theme: ThemeData(
               brightness: appState.isDarkTheme ? Brightness.dark : Brightness.light,
               primarySwatch: Colors.blue,
@@ -304,9 +368,12 @@ class _SoccerTimeAppState extends State<SoccerTimeApp> with WidgetsBindingObserv
             // Define routes directly using the route constructors for better type checking
             initialRoute: '/',
             routes: {
-              '/': (context) => SessionPromptScreen(),
+              '/': (context) => hasInitializationError 
+                  ? InitializationErrorScreen(errorMessage: errorMessage)
+                  : SessionPromptScreen(),
               '/main': (context) => MainScreen(),
               '/settings': (context) => SettingsScreen(),
+              '/session_history': (context) => SessionHistoryScreen(),
             },
             debugShowCheckedModeBanner: false,
           );

@@ -20,6 +20,7 @@ class HiveSessionDatabase {
   static const String sessionBoxName = 'sessions';
   static const String playersBoxName = 'players';
   static const String settingsBoxName = 'sessionSettings';
+  static const String historyBoxName = 'sessionHistory'; // New box for session history
   
   static HiveSessionDatabase? _instance;
   static HiveSessionDatabase get instance => _instance ??= HiveSessionDatabase._();
@@ -28,6 +29,7 @@ class HiveSessionDatabase {
   Box<Map>? _sessionsBox;
   Box<Map>? _playersBox;
   Box<Map>? _settingsBox;
+  Box<Map>? _historyBox; // New box for session history
   
   HiveSessionDatabase._();
   
@@ -36,7 +38,8 @@ class HiveSessionDatabase {
     if (_initialized && 
         _sessionsBox != null && _sessionsBox!.isOpen &&
         _playersBox != null && _playersBox!.isOpen &&
-        _settingsBox != null && _settingsBox!.isOpen) {
+        _settingsBox != null && _settingsBox!.isOpen &&
+        _historyBox != null && _historyBox!.isOpen) {
       return;
     }
     
@@ -48,11 +51,13 @@ class HiveSessionDatabase {
       await _sessionsBox?.close();
       await _playersBox?.close();
       await _settingsBox?.close();
+      await _historyBox?.close();
       
       // Open boxes (or reuse existing ones if they're still open)
       _sessionsBox = await Hive.openBox<Map>(sessionBoxName);
       _playersBox = await Hive.openBox<Map>(playersBoxName);
       _settingsBox = await Hive.openBox<Map>(settingsBoxName);
+      _historyBox = await Hive.openBox<Map>(historyBoxName);
       
       _initialized = true;
       print('Hive database initialized successfully');
@@ -131,10 +136,24 @@ class HiveSessionDatabase {
       }
     }
     
-    // Sort by created_at timestamp (newest first)
-    sessions.sort((a, b) => 
-      (b['created_at'] ?? 0).compareTo(a['created_at'] ?? 0)
-    );
+    // Sort by last_used_at timestamp first (if available), then by created_at (newest first)
+    sessions.sort((a, b) {
+      // Check if last_used_at timestamp exists on both sessions
+      final aLastUsed = a['last_used_at'] as int?;
+      final bLastUsed = b['last_used_at'] as int?;
+      
+      // If both have last_used_at, compare them
+      if (aLastUsed != null && bLastUsed != null) {
+        return bLastUsed.compareTo(aLastUsed); // Most recently used first
+      }
+      
+      // If only one has last_used_at, prioritize the one with it
+      if (aLastUsed != null) return -1;
+      if (bLastUsed != null) return 1;
+      
+      // Fall back to created_at timestamp
+      return (b['created_at'] ?? 0).compareTo(a['created_at'] ?? 0);
+    });
     
     print('Retrieved ${sessions.length} sessions from Hive');
     return sessions;
@@ -164,6 +183,12 @@ class HiveSessionDatabase {
           // Save the fixed session back to storage
           await updateSession(session);
         }
+        
+        // Update last_used_at timestamp
+        session['last_used_at'] = DateTime.now().millisecondsSinceEpoch;
+        
+        // Save the updated timestamp
+        await updateSession(session);
         
         print('HiveSessionDatabase: Successfully retrieved session: id=$id, name="${session['name']}"');
         return session;
@@ -318,12 +343,193 @@ class HiveSessionDatabase {
     return null;
   }
   
+  // SESSION HISTORY METHODS
+  
+  // Save a session to history
+  Future<bool> saveSessionToHistory(Map<String, dynamic> sessionData, List<Map<String, dynamic>> matchLog) async {
+    await init();
+    
+    try {
+      final sessionId = sessionData['id'];
+      if (sessionId == null) {
+        print('Cannot save session to history: No ID provided');
+        return false;
+      }
+      
+      // Create a unique key for the history entry (timestamp + session ID to ensure uniqueness)
+      final historyKey = '${DateTime.now().millisecondsSinceEpoch}_$sessionId';
+      
+      // Generate a meaningful default title using date and score
+      final now = DateTime.now();
+      final dateStr = '${now.month}/${now.day}/${now.year}';
+      final sessionName = sessionData['name'] ?? 'Session $sessionId';
+      
+      // Get score if available
+      String scoreStr = '';
+      if (sessionData.containsKey('teamGoals') && sessionData.containsKey('opponentGoals')) {
+        final teamGoals = sessionData['teamGoals'];
+        final opponentGoals = sessionData['opponentGoals'];
+        scoreStr = ' ($teamGoals-$opponentGoals)';
+      }
+      
+      // Create title with date and score (e.g. "12/25/2023 (3-1)")
+      final title = '$dateStr$scoreStr';
+      
+      // Create the history entry with session data and match log
+      final historyEntry = Map<dynamic, dynamic>.from({
+        'id': historyKey,
+        'session_id': sessionId,
+        'session_data': sessionData,
+        'match_log': matchLog,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+        'title': title,  // More meaningful default title
+      });
+      
+      // Store the history entry
+      await _historyBox!.put(historyKey, historyEntry);
+      print('Saved session $sessionId to history with key $historyKey');
+      return true;
+    } catch (e) {
+      print('Error saving session to history: $e');
+      return false;
+    }
+  }
+  
+  // Get all history entries for a session
+  Future<List<Map<String, dynamic>>> getSessionHistory(int sessionId) async {
+    await init();
+    final List<Map<String, dynamic>> historyEntries = [];
+    
+    for (final key in _historyBox!.keys) {
+      try {
+        final rawEntry = _historyBox!.get(key);
+        if (rawEntry == null) continue;
+        
+        // Convert to Map<String, dynamic>
+        final Map<dynamic, dynamic> originalMap = Map<dynamic, dynamic>.from(rawEntry);
+        final Map<String, dynamic> entry = {};
+        
+        // Copy values with string keys
+        originalMap.forEach((k, v) {
+          entry[k.toString()] = v;
+        });
+        
+        // Check if this entry belongs to the requested session
+        if (entry['session_id'] == sessionId) {
+          historyEntries.add(entry);
+        }
+      } catch (e) {
+        print('Error processing history entry with key $key: $e');
+      }
+    }
+    
+    // Sort by created_at timestamp (newest first)
+    historyEntries.sort((a, b) => 
+      (b['created_at'] ?? 0).compareTo(a['created_at'] ?? 0)
+    );
+    
+    print('Retrieved ${historyEntries.length} history entries for session $sessionId');
+    return historyEntries;
+  }
+  
+  // Get a specific history entry by its ID
+  Future<Map<String, dynamic>?> getHistoryEntry(String historyId) async {
+    await init();
+    
+    try {
+      final rawEntry = _historyBox!.get(historyId);
+      if (rawEntry == null) {
+        print('History entry not found with id: $historyId');
+        return null;
+      }
+      
+      // Convert to Map<String, dynamic>
+      final Map<dynamic, dynamic> originalMap = Map<dynamic, dynamic>.from(rawEntry);
+      final Map<String, dynamic> entry = {};
+      
+      // Copy values with string keys
+      originalMap.forEach((k, v) {
+        entry[k.toString()] = v;
+      });
+      
+      return entry;
+    } catch (e) {
+      print('Error retrieving history entry: $e');
+      return null;
+    }
+  }
+  
+  // Delete a specific history entry
+  Future<bool> deleteHistoryEntry(String historyId) async {
+    await init();
+    
+    try {
+      await _historyBox!.delete(historyId);
+      print('Deleted history entry $historyId');
+      return true;
+    } catch (e) {
+      print('Error deleting history entry: $e');
+      return false;
+    }
+  }
+  
+  // Delete all history entries for a session
+  Future<bool> deleteSessionHistory(int sessionId) async {
+    await init();
+    
+    try {
+      // Find all history entries for this session
+      final entries = await getSessionHistory(sessionId);
+      
+      // Delete each entry
+      for (final entry in entries) {
+        final historyId = entry['id'];
+        if (historyId != null) {
+          await _historyBox!.delete(historyId);
+        }
+      }
+      
+      print('Deleted all history entries for session $sessionId');
+      return true;
+    } catch (e) {
+      print('Error deleting session history: $e');
+      return false;
+    }
+  }
+  
+  // Update history entry
+  Future<bool> updateHistoryEntry(Map<String, dynamic> historyEntry) async {
+    await init();
+    
+    try {
+      final historyId = historyEntry['id'];
+      if (historyId == null) {
+        print('Cannot update history entry: No ID provided');
+        return false;
+      }
+      
+      // Convert to Map<dynamic, dynamic> for Hive storage
+      final Map<dynamic, dynamic> storageMap = {};
+      historyEntry.forEach((k, v) {
+        storageMap[k] = v;
+      });
+      
+      await _historyBox!.put(historyId, storageMap);
+      print('Updated history entry with ID $historyId');
+      return true;
+    } catch (e) {
+      print('Error updating history entry: $e');
+      return false;
+    }
+  }
+  
   // CLEANUP
   
   Future<void> close() async {
     await _sessionsBox?.close();
     await _playersBox?.close();
     await _settingsBox?.close();
+    await _historyBox?.close();
     print('Hive database closed');
   }
   
@@ -334,6 +540,7 @@ class HiveSessionDatabase {
     await _sessionsBox!.clear();
     await _playersBox!.clear();
     await _settingsBox!.clear();
+    await _historyBox!.clear();
     
     print('Cleared all sessions from Hive database');
   }

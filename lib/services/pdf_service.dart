@@ -43,6 +43,10 @@ class PdfService {
     required List<MatchLogEntry> entries,
     required Session session,
     required bool isDarkTheme,
+    String? sessionName,
+    int? teamGoals,
+    int? opponentGoals,
+    DateTime? timestamp,
   }) async {
     // Create a PDF document
     final pdf = pw.Document();
@@ -62,8 +66,11 @@ class PdfService {
     final playerExitBorderColor = PdfColor(0xE5/255, 0x73/255, 0x73/255);
     final defaultBorderColor = PdfColors.grey700;
     
-    // Get timestamp parts
-    final timestampParts = _formatTimestampParts(DateTime.now().toString());
+    // Get timestamp parts - use provided timestamp or current time
+    // Use history timestamp if available to show match completion time
+    final timestampParts = timestamp != null 
+        ? _formatTimestampParts(timestamp.toString())
+        : _formatTimestampParts(DateTime.now().toString());
     
     // Pre-load all icons - using actual png files from assets
     final soccerballIcon = await _createSoccerBallFromPng();
@@ -76,47 +83,55 @@ class PdfService {
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.fromLTRB(24, 10, 24, 15), // Reduced margins
         header: (context) {
           return pw.Container(
-            margin: const pw.EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            padding: const pw.EdgeInsets.only(bottom: 8),
-            decoration: pw.BoxDecoration(
-              border: pw.Border(
-                bottom: pw.BorderSide(
-                  color: headerBorderColor,
-                  width: 0.5,
-                ),
-              ),
-            ),
+            margin: const pw.EdgeInsets.only(bottom: 4), // Reduced bottom margin
+            padding: const pw.EdgeInsets.all(0), // Explicit zero padding
             child: pw.Column(
               children: [
-                // Top row: Team name & score on left, date & time on right
+                // Title at the very top, centered
+                pw.Center(
+                  child: pw.Text(
+                    'Match Report',
+                    style: pw.TextStyle(
+                      color: headerTextColor, 
+                      fontSize: 20,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                ),
+                pw.SizedBox(height: 6),
+                // Team name/score and date below title
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: pw.CrossAxisAlignment.center,
                   children: [
-                    // Left side: Team name and score
+                    // Left side: Team name and score only (no date)
                     pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
+                        // Clean session name - remove any date elements that might be in the name
                         pw.Text(
-                          session.sessionName,
+                          _cleanSessionNameForPdf(sessionName ?? session.sessionName),
                           style: pw.TextStyle(
                             color: headerTextColor,
                             fontSize: 14,
-                            fontWeight: pw.FontWeight.bold,
                           ),
                         ),
                         pw.SizedBox(height: 2),
-                        pw.Text(
-                          '${session.teamGoals} - ${session.opponentGoals}',
-                          style: pw.TextStyle(
-                            color: headerTextColor,
-                            fontSize: 12,
-                            fontWeight: pw.FontWeight.bold,
+                        // Only show score line if match name doesn't already have score
+                        if (!_sessionNameContainsScore(_cleanSessionNameForPdf(sessionName ?? session.sessionName)))
+                          pw.Text(
+                            'Score: ${teamGoals ?? session.teamGoals} - ${opponentGoals ?? session.opponentGoals}',
+                            style: pw.TextStyle(
+                              color: headerTextColor,
+                              fontSize: 12,
+                            ),
                           ),
-                        ),
                       ],
                     ),
+                    
                     // Right side: Date and time
                     pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.end,
@@ -140,18 +155,6 @@ class PdfService {
                     ),
                   ],
                 ),
-                // Second row: Centered title
-                pw.SizedBox(height: 8),
-                pw.Center(
-                  child: pw.Text(
-                    'Match Report',
-                    style: pw.TextStyle(
-                      color: headerTextColor, 
-                      fontSize: 20,
-                      fontWeight: pw.FontWeight.bold,
-                    ),
-                  ),
-                ),
               ],
             ),
           );
@@ -160,8 +163,8 @@ class PdfService {
           return [
             // Content with border
             pw.Container(
-              margin: const pw.EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-              padding: const pw.EdgeInsets.all(8),
+              margin: const pw.EdgeInsets.only(bottom: 4), // Reduced margin
+              padding: const pw.EdgeInsets.all(6), // Reduced padding
               decoration: pw.BoxDecoration(
                 border: pw.Border.all(
                   color: headerBorderColor,
@@ -208,8 +211,8 @@ class PdfService {
                   }
                   
                   return pw.Container(
-                    margin: const pw.EdgeInsets.only(bottom: 8),
-                    padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    margin: const pw.EdgeInsets.only(bottom: 4), // Reduced margin
+                    padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 6), // Reduced padding
                     decoration: pw.BoxDecoration(
                       border: pw.Border(
                         left: pw.BorderSide(
@@ -279,8 +282,8 @@ class PdfService {
         },
         footer: (context) {
           return pw.Container(
-            margin: const pw.EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-            padding: const pw.EdgeInsets.only(top: 8),
+            margin: const pw.EdgeInsets.only(top: 5), // Reduced margin
+            padding: const pw.EdgeInsets.only(top: 3), // Reduced padding
             decoration: pw.BoxDecoration(
               border: pw.Border(
                 top: pw.BorderSide(
@@ -295,10 +298,10 @@ class PdfService {
                 pw.Expanded(
                   flex: 1,
                   child: pw.Text(
-                    session.sessionName,
+                    _cleanSessionNameForPdf(sessionName ?? session.sessionName),
                     style: pw.TextStyle(
                       color: PdfColors.black,
-                      fontSize: 10,
+                      fontSize: 8, // Smaller font
                       fontWeight: pw.FontWeight.bold,
                     ),
                   ),
@@ -308,20 +311,22 @@ class PdfService {
                   flex: 1,
                   child: pw.Center(
                     child: pw.Column(
+                      mainAxisSize: pw.MainAxisSize.min, // Minimize height
                       children: [
                         pw.Text(
                           'SoccerTimeApp',
                           style: pw.TextStyle(
                             color: PdfColors.black,
-                            fontSize: 10,
+                            fontSize: 8, // Smaller font
                             fontWeight: pw.FontWeight.bold,
                           ),
                         ),
+                        pw.SizedBox(height: 1), // Minimize spacing
                         pw.Text(
                           'www.soccertimeapp.com',
                           style: pw.TextStyle(
                             color: PdfColors.black,
-                            fontSize: 9,
+                            fontSize: 7, // Smaller font
                           ),
                         ),
                       ],
@@ -337,7 +342,7 @@ class PdfService {
                       'Page ${context.pageNumber} of ${context.pagesCount}',
                       style: pw.TextStyle(
                         color: PdfColors.black,
-                        fontSize: 10,
+                        fontSize: 8, // Smaller font
                       ),
                     ),
                   ),
@@ -780,5 +785,393 @@ class PdfService {
       print('Failed to create soccer ball icon: $e');
       return await _createDefaultIcon(Colors.black);
     }
+  }
+
+  // Add a method to generate player times PDF
+  Future<File> generatePlayerTimesPdf({
+    required String sessionName,
+    required List<Map<String, dynamic>> playerData,
+    required bool isDarkMode,
+    int teamGoals = 0,
+    int opponentGoals = 0,
+    DateTime? timestamp,
+  }) async {
+    // Create a PDF document
+    final pdf = pw.Document();
+    
+    // Define printer-friendly colors
+    final headerBorderColor = PdfColors.grey600;
+    final textColor = PdfColors.black;
+    final headerTextColor = PdfColors.black;
+    
+    // Get timestamp parts - use provided timestamp or current time
+    // Use history timestamp if available to show match completion time
+    final timestampParts = timestamp != null 
+        ? _formatTimestampParts(timestamp.toString())
+        : _formatTimestampParts(DateTime.now().toString());
+    
+    // Add pages to the PDF
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.fromLTRB(24, 10, 24, 15), // Reduced margins
+        header: (context) {
+          return pw.Container(
+            margin: const pw.EdgeInsets.only(bottom: 4), // Reduced bottom margin
+            padding: const pw.EdgeInsets.all(0), // Explicit zero padding
+            child: pw.Column(
+              children: [
+                // Title at the very top, centered
+                pw.Center(
+                  child: pw.Text(
+                    'Player Times Report',
+                    style: pw.TextStyle(
+                      color: headerTextColor, 
+                      fontSize: 20,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                ),
+                pw.SizedBox(height: 6),
+                // Team name/score and date below title
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: pw.CrossAxisAlignment.center,
+                  children: [
+                    // Left side: Team name
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          _cleanSessionNameForPdf(sessionName),
+                          style: pw.TextStyle(
+                            color: headerTextColor,
+                            fontSize: 14,
+                          ),
+                        ),
+                        pw.SizedBox(height: 2),
+                        // Only show score line if match name doesn't already have score
+                        if (!_sessionNameContainsScore(_cleanSessionNameForPdf(sessionName)))
+                          pw.Text(
+                            'Score: $teamGoals - $opponentGoals',
+                            style: pw.TextStyle(
+                              color: headerTextColor,
+                              fontSize: 12,
+                            ),
+                          ),
+                      ],
+                    ),
+                    
+                    // Right side: Date and time
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.end,
+                      children: [
+                        pw.Text(
+                          timestampParts['date']!,
+                          style: pw.TextStyle(
+                            color: headerTextColor,
+                            fontSize: 12,
+                          ),
+                        ),
+                        pw.SizedBox(height: 2),
+                        pw.Text(
+                          timestampParts['time']!,
+                          style: pw.TextStyle(
+                            color: headerTextColor,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+        build: (context) {
+          return [
+            // Content with border
+            pw.Container(
+              margin: const pw.EdgeInsets.only(bottom: 4), // Reduced margin
+              padding: const pw.EdgeInsets.all(8), // Reduced padding
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(
+                  color: headerBorderColor,
+                  width: 1,
+                ),
+                borderRadius: pw.BorderRadius.circular(4),
+              ),
+              child: pw.Column(
+                children: [
+                  // Table header row
+                  pw.Container(
+                    padding: const pw.EdgeInsets.symmetric(vertical: 6.0), // Reduced padding
+                    decoration: pw.BoxDecoration(
+                      border: pw.Border(
+                        bottom: pw.BorderSide(
+                          color: headerBorderColor,
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                    child: pw.Row(
+                      children: [
+                        pw.Expanded(
+                          flex: 5,
+                          child: pw.Text(
+                            'PLAYER',
+                            style: pw.TextStyle(
+                              fontSize: 14,
+                              fontWeight: pw.FontWeight.bold,
+                              color: headerTextColor,
+                            ),
+                          ),
+                        ),
+                        pw.Expanded(
+                          flex: 3,
+                          child: pw.Text(
+                            'TIME',
+                            style: pw.TextStyle(
+                              fontSize: 14,
+                              fontWeight: pw.FontWeight.bold,
+                              color: headerTextColor,
+                            ),
+                            textAlign: pw.TextAlign.right,
+                          ),
+                        ),
+                        pw.Expanded(
+                          flex: 2,
+                          child: pw.Text(
+                            'GOALS',
+                            style: pw.TextStyle(
+                              fontSize: 14,
+                              fontWeight: pw.FontWeight.bold,
+                              color: headerTextColor,
+                            ),
+                            textAlign: pw.TextAlign.right,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  // Player rows
+                  ...playerData.map((player) {
+                    return pw.Container(
+                      padding: const pw.EdgeInsets.symmetric(vertical: 8.0), // Reduced padding
+                      decoration: pw.BoxDecoration(
+                        border: pw.Border(
+                          bottom: pw.BorderSide(
+                            color: PdfColors.grey300,
+                            width: 0.5,
+                          ),
+                        ),
+                      ),
+                      child: pw.Row(
+                        children: [
+                          pw.Expanded(
+                            flex: 5,
+                            child: pw.Text(
+                              player['name'],
+                              style: pw.TextStyle(
+                                fontSize: 12,
+                                color: textColor,
+                              ),
+                            ),
+                          ),
+                          pw.Expanded(
+                            flex: 3,
+                            child: pw.Text(
+                              player['time'],
+                              style: pw.TextStyle(
+                                fontSize: 12,
+                                color: textColor,
+                              ),
+                              textAlign: pw.TextAlign.right,
+                            ),
+                          ),
+                          pw.Expanded(
+                            flex: 2,
+                            child: pw.Text(
+                              player['goals']?.toString() ?? '0',
+                              style: pw.TextStyle(
+                                fontSize: 12,
+                                color: textColor,
+                              ),
+                              textAlign: pw.TextAlign.right,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ],
+              ),
+            ),
+          ];
+        },
+        footer: (context) {
+          return pw.Container(
+            margin: const pw.EdgeInsets.only(top: 5), // Reduced margin
+            padding: const pw.EdgeInsets.only(top: 3), // Reduced padding
+            decoration: pw.BoxDecoration(
+              border: pw.Border(
+                top: pw.BorderSide(
+                  color: headerBorderColor,
+                  width: 0.5,
+                ),
+              ),
+            ),
+            child: pw.Row(
+              children: [
+                // Left aligned team name
+                pw.Expanded(
+                  flex: 1,
+                  child: pw.Text(
+                    _cleanSessionNameForPdf(sessionName),
+                    style: pw.TextStyle(
+                      color: PdfColors.black,
+                      fontSize: 8, // Smaller font
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                ),
+                // Center aligned app info
+                pw.Expanded(
+                  flex: 1,
+                  child: pw.Center(
+                    child: pw.Column(
+                      mainAxisSize: pw.MainAxisSize.min, // Minimize height
+                      children: [
+                        pw.Text(
+                          'SoccerTimeApp',
+                          style: pw.TextStyle(
+                            color: PdfColors.black,
+                            fontSize: 8, // Smaller font
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                        pw.SizedBox(height: 1), // Minimize spacing
+                        pw.Text(
+                          'www.soccertimeapp.com',
+                          style: pw.TextStyle(
+                            color: PdfColors.black,
+                            fontSize: 7, // Smaller font
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Right aligned page numbers
+                pw.Expanded(
+                  flex: 1,
+                  child: pw.Align(
+                    alignment: pw.Alignment.centerRight,
+                    child: pw.Text(
+                      'Page ${context.pageNumber} of ${context.pagesCount}',
+                      style: pw.TextStyle(
+                        color: PdfColors.black,
+                        fontSize: 8, // Smaller font
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    
+    // Get the temp directory
+    final tempDir = await getTemporaryDirectory();
+    final tempPath = tempDir.path;
+    final filePath = '$tempPath/player_times.pdf';
+    
+    // Save the PDF to a file
+    final file = File(filePath);
+    await file.writeAsBytes(await pdf.save());
+    
+    return file;
+  }
+
+  // Helper method to clean session name for PDF headers
+  String _cleanSessionNameForPdf(String sessionName) {
+    // Check for combined date with timestamp pattern (likely from history display)
+    // Example: "3/30/2025 (0-0) - 03/30/2025 5:35 PM"
+    final combinedPattern = RegExp(r'(\d{1,2}/\d{1,2}/\d{4})\s*\(\d+-\d+\)\s*-\s*\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}\s*[ap]m', caseSensitive: false);
+    if (combinedPattern.hasMatch(sessionName)) {
+      // Extract just the first part with date and score: "3/30/2025 (0-0)"
+      final match = combinedPattern.firstMatch(sessionName);
+      if (match != null) {
+        // Try to get portion up to the dash
+        final dashIndex = sessionName.indexOf(' - ');
+        if (dashIndex > 0) {
+          return sessionName.substring(0, dashIndex).trim();
+        }
+      }
+    }
+    
+    // Check if the session name is just a date pattern (original match name is a timestamp)
+    // If so, it's the default name and we should keep it as is
+    final justDatePattern = RegExp(r'^\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}\s*[ap]m$');
+    if (justDatePattern.hasMatch(sessionName)) {
+      return sessionName; // Keep the date as the match name
+    }
+    
+    // Also check for date with score format
+    final dateScorePattern = RegExp(r'^\d{1,2}/\d{1,2}/\d{4}\s*\(\d+-\d+\)$');
+    if (dateScorePattern.hasMatch(sessionName)) {
+      return sessionName; // Keep the date and score as the match name
+    }
+    
+    // Also check for simple date format without time
+    final simpleDatePattern = RegExp(r'^\d{1,2}/\d{1,2}/\d{4}$');
+    if (simpleDatePattern.hasMatch(sessionName)) {
+      return sessionName; // Keep the date as the match name
+    }
+
+    // Pattern to match "Session History" or similar default names
+    final defaultNamePattern = RegExp(r'^(Session|History|Match)(\s+History)?$', caseSensitive: false);
+    if (defaultNamePattern.hasMatch(sessionName)) {
+      return "Match";
+    }
+    
+    // Only clean up if there's more than just a date/timestamp pattern
+    // This handles cases with a custom name + timestamp
+    
+    // 1. Pattern to match dates like "Title - MM/DD/YYYY h:mm a"
+    final dateWithDashPattern = RegExp(r'\s*-\s*\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}\s*[ap]m', caseSensitive: false);
+    String cleanName = sessionName.replaceAll(dateWithDashPattern, '');
+    
+    // 2. Pattern to match dates with parentheses like "MM/DD/YYYY (3-1)"
+    final dateScoreStandalonePattern = RegExp(r'\d{1,2}/\d{1,2}/\d{4}\s*\(\d+-\d+\)');
+    cleanName = cleanName.replaceAll(dateScoreStandalonePattern, '');
+    
+    // 3. Only remove standalone date patterns if there's other text
+    final timestampPattern = RegExp(r'\d{1,2}/\d{1,2}/\d{4}');
+    final match = timestampPattern.firstMatch(cleanName);
+    if (match != null && cleanName.length > match.group(0)!.length) {
+      cleanName = cleanName.replaceAll(timestampPattern, '');
+    }
+    
+    // Clean up any trailing dashes or excessive whitespace
+    cleanName = cleanName.replaceAll(RegExp(r'\s*-\s*$'), '');
+    cleanName = cleanName.trim();
+    
+    // If we've removed everything, return a default
+    if (cleanName.isEmpty) {
+      return sessionName; // Return original if cleaning left nothing
+    }
+    
+    return cleanName;
+  }
+
+  // Helper method to check if session name already contains score
+  bool _sessionNameContainsScore(String sessionName) {
+    final scorePattern = RegExp(r'\(\d+-\d+\)');
+    return scorePattern.hasMatch(sessionName);
   }
 } 

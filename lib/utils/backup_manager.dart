@@ -112,10 +112,14 @@ class BackupManager {
         final players = await HiveSessionDatabase.instance.getPlayersForSession(sessionId);
         final settings = await HiveSessionDatabase.instance.getSessionSettings(sessionId);
         
+        // Also get session history entries for this session
+        final history = await HiveSessionDatabase.instance.getSessionHistory(sessionId);
+        
         backupData.add({
           'session': session,
           'players': players,
           'settings': settings,
+          'history': history, // Include history data in the backup
         });
       }
       
@@ -398,6 +402,27 @@ class BackupManager {
           // Restore settings
           if (settings != null) {
             await HiveSessionDatabase.instance.saveSessionSettings(sessionId, settings);
+          }
+          
+          // Restore history entries if they exist in the backup (for backward compatibility)
+          if (item['history'] != null && item['history'] is List) {
+            final historyEntries = item['history'] as List;
+            for (final historyEntry in historyEntries) {
+              // Use the updateHistoryEntry method instead of accessing _historyBox directly
+              try {
+                // Convert dynamic types to a Map<String, dynamic>
+                final Map<String, dynamic> historyData = {};
+                historyEntry.forEach((key, value) {
+                  historyData[key.toString()] = value;
+                });
+                
+                // Use the proper update method
+                await HiveSessionDatabase.instance.updateHistoryEntry(historyData);
+                print('Restored history entry with ID: ${historyData['id']} for session: $sessionId');
+              } catch (e) {
+                print('Error restoring history entry: $e');
+              }
+            }
           }
           
           restoredSessions++;
@@ -829,6 +854,26 @@ class BackupManager {
           final sessionId = settingData['session_id'];
           await db.saveSessionSettings(sessionId, settingData);
         }
+        
+        // Check if we have history data (newer backups)
+        if (backupData.containsKey('history')) {
+          final history = backupData['history'] as List;
+          for (final historyEntry in history) {
+            try {
+              // Convert dynamic types to a Map<String, dynamic>
+              final Map<String, dynamic> historyData = {};
+              historyEntry.forEach((key, value) {
+                historyData[key.toString()] = value;
+              });
+              
+              // Use the proper update method
+              await db.updateHistoryEntry(historyData);
+              print('Restored history entry with ID: ${historyData['id']}');
+            } catch (e) {
+              print('Error restoring history entry: $e');
+            }
+          }
+        }
       } else {
         // Array format: [{session: {...}, players: [...], settings: [...]}]
         final backupItems = backupData['backupData'] ?? backupData as List;
@@ -857,6 +902,27 @@ class BackupManager {
           // Add settings
           if (item['settings'] != null) {
             await db.saveSessionSettings(sessionId, item['settings']);
+          }
+          
+          // Restore history entries if they exist in the backup (for backward compatibility)
+          if (item['history'] != null && item['history'] is List) {
+            final historyEntries = item['history'] as List;
+            for (final historyEntry in historyEntries) {
+              // Use the updateHistoryEntry method instead of accessing _historyBox directly
+              try {
+                // Convert dynamic types to a Map<String, dynamic>
+                final Map<String, dynamic> historyData = {};
+                historyEntry.forEach((key, value) {
+                  historyData[key.toString()] = value;
+                });
+                
+                // Use the proper update method
+                await db.updateHistoryEntry(historyData);
+                print('Restored history entry with ID: ${historyData['id']} for session: $sessionId');
+              } catch (e) {
+                print('Error restoring history entry: $e');
+              }
+            }
           }
         }
       }

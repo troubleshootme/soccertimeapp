@@ -52,6 +52,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   bool _needsUIUpdate = false;
   DateTime _lastUIUpdate = DateTime.now();
 
+  // Getter to check if match is running
+  bool get _isMatchRunning => _matchTimer != null && !Provider.of<AppState>(context, listen: false).session.isMatchComplete;
+
   @override
   void initState() {
     super.initState();
@@ -1566,6 +1569,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     
     final appState = Provider.of<AppState>(context, listen: false);
     final isDark = appState.isDarkTheme;
+    final matchDurationDisabled = !appState.session.enableMatchDuration;
     
     showDialog(
       context: context,
@@ -1605,6 +1609,31 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                 _showGoalActionDialog(context, _actionTimestamp!); // Pass the stored timestamp
               },
             ),
+            // Add End Match option when match duration is disabled
+            if (matchDurationDisabled && !appState.session.isMatchComplete && !appState.session.isSetup)
+              ListTile(
+                leading: SvgPicture.asset(
+                  'assets/images/white_whistle.svg',
+                  height: 24,
+                  width: 24,
+                  colorFilter: ColorFilter.mode(
+                    Colors.red,
+                    BlendMode.srcIn
+                  ),
+                ),
+                title: Text(
+                  'End the Match',
+                  style: TextStyle(
+                    color: isDark ? Colors.white : Colors.black,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context); // Close action selection dialog
+                  _showEndMatchConfirmationDialog(context); // Show confirmation dialog
+                },
+              ),
             // Add more actions here in the future
           ],
         ),
@@ -1616,6 +1645,167 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
         ],
       ),
     );
+  }
+  
+  // Add a new method for the end match confirmation dialog
+  Future<bool?> _showEndMatchConfirmationDialog(BuildContext context) {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final isDark = appState.isDarkTheme;
+    final score = "${appState.session.teamGoals}-${appState.session.opponentGoals}";
+    
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+        title: Row(
+          children: [
+            Icon(
+              Icons.sports_soccer,
+              color: Colors.red,
+              size: 24,
+            ),
+            SizedBox(width: 8),
+            Text(
+              'End Match?',
+              style: TextStyle(
+                color: isDark ? Colors.white : Colors.black,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to end the match?',
+              style: TextStyle(
+                color: isDark ? Colors.white70 : Colors.black87,
+                fontSize: 16,
+              ),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Current Score: $score',
+              style: TextStyle(
+                color: isDark ? Colors.white : Colors.black,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Match Time: ${_formatTime(_matchTime)}',
+              style: TextStyle(
+                color: isDark ? Colors.white70 : Colors.black87,
+                fontSize: 16,
+              ),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'This will save the match to session history.',
+              style: TextStyle(
+                color: isDark ? Colors.orange.shade300 : Colors.orange.shade800,
+                fontSize: 14,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          // Cancel button
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            style: TextButton.styleFrom(
+              foregroundColor: isDark ? Colors.white70 : Colors.black54,
+            ),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                fontSize: 16,
+              ),
+            ),
+          ),
+          // End Match button
+          ElevatedButton(
+            onPressed: () {
+              // End the match
+              _endMatchManually(context);
+              // Return true to allow exit
+              Navigator.pop(context, true);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text(
+              'End Match',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Add a method to handle manual match ending
+  void _endMatchManually(BuildContext context) {
+    final appState = Provider.of<AppState>(context, listen: false);
+    
+    // Debug logging
+    print("MANUAL MATCH END: Ending match at time=${_matchTime}");
+    
+    // Ensure all player times are updated
+    for (var playerName in appState.session.players.keys) {
+      final player = appState.session.players[playerName]!;
+      if (player.active && player.lastActiveMatchTime != null) {
+        // Update total time for active players
+        player.totalTime += (_matchTime - player.lastActiveMatchTime!);
+        player.lastActiveMatchTime = null;
+        player.active = false;
+      }
+    }
+    
+    // Stop and cancel the timer
+    _matchTimer?.cancel();
+    _matchTimer = null;
+    
+    // End the match through app state
+    appState.endMatch();
+    
+    // Sound and haptic feedback
+    _audioService.playWhistle();
+    _hapticService.matchEnd(context);
+    
+    // Show match end dialog
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => PeriodEndDialog(
+            isMatchEnd: true,
+            onOk: () {
+              final appState = Provider.of<AppState>(context, listen: false);
+              appState.ensureMatchEndLogged();
+              Navigator.of(context).pop();
+            },
+          ),
+        );
+      }
+    });
+    
+    // Update UI state
+    _safeSetState(() {
+      _isPaused = true;
+      _matchTimeNotifier.value = _matchTime;
+    });
   }
 
   // Modify the goal action dialog to accept the timestamp
@@ -1964,50 +2154,32 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Provider.of<AppState>(context).isDarkTheme;
     final appState = Provider.of<AppState>(context);
-    final bool isInPeriodTransition = appState.periodsTransitioning;
-    
-    // Ensure local pause state stays in sync with session state
-    if (_isPaused != appState.session.isPaused) {
-      // Don't call setState during build
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _safeSetState(() {
-          _isPaused = appState.session.isPaused;
-        });
-      });
-    }
-    
-    // Update animation state based on player count
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final hasPlayers = appState.players.isNotEmpty;
-      if (hasPlayers && _pulseController.isAnimating) {
-        _pulseController.stop();
-      } else if (!hasPlayers && !_pulseController.isAnimating) {
-        _pulseController.repeat(reverse: true);
-      }
-    });
+    final isDark = appState.isDarkTheme;
     
     return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (!didPop) {
-          final shouldExit = await _showExitWarning();
-          if (shouldExit) {
-            // Clear session and exit
-            Provider.of<AppState>(context, listen: false).clearCurrentSession();
-            
-            // Use pushAndRemoveUntil to clear navigation history
-            Navigator.pushNamedAndRemoveUntil(
-              context, 
-              '/', 
-              (route) => false
-            );
+      canPop: !_isMatchRunning,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
+        
+        if (_isMatchRunning) {
+          final shouldPop = await _showExitConfirmationDialog(context);
+          if (shouldPop == true) {
+            // End match handled in dialog
+            Navigator.of(context).pop();
           }
+        } else {
+          Navigator.of(context).pop();
         }
       },
       child: Scaffold(
-        backgroundColor: isDark ? AppThemes.darkBackground : AppThemes.lightBackground,
+        appBar: AppBar(
+          title: Text(appState.session.sessionName),
+          backgroundColor: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
+          actions: [
+            // Add any additional actions you want to appear in the app bar
+          ],
+        ),
         body: Stack(
           children: [
             // Add a semi-transparent overlay when paused
@@ -2848,55 +3020,55 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     );
   }
   
-  Future<bool> _showExitWarning() async {
-    final isDark = Provider.of<AppState>(context, listen: false).isDarkTheme;
+  Future<bool?> _showExitConfirmationDialog(BuildContext context) async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final isDark = appState.isDarkTheme;
     
-    return await showDialog<bool>(
+    // If match is running, show end match dialog
+    if (!appState.session.isMatchComplete && !appState.session.isSetup) {
+      return _showEndMatchConfirmationDialog(context);
+    }
+    
+    // Default exit dialog for non-match scenarios
+    return showDialog<bool>(
       context: context,
-      barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
         title: Text(
-          'Exit Match?',
+          'Exit App?',
           style: TextStyle(
-            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            color: isDark ? Colors.white : Colors.black,
+            fontSize: 20,
             fontWeight: FontWeight.bold,
-            letterSpacing: 0.5,
           ),
         ),
         content: Text(
-          'If you exit, all session timers will be reset. Are you sure you want to exit?',
+          'Do you want to exit the app?',
           style: TextStyle(
-            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            color: isDark ? Colors.white70 : Colors.black87,
+            fontSize: 16,
           ),
         ),
         actions: [
+          // Cancel button
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(
-              'Cancel',
-              style: TextStyle(
-                color: isDark ? AppThemes.darkSecondaryBlue : AppThemes.lightSecondaryBlue,
-                letterSpacing: 0.5,
-              ),
+            onPressed: () => Navigator.pop(context, false),
+            style: TextButton.styleFrom(
+              foregroundColor: isDark ? Colors.white70 : Colors.black54,
             ),
+            child: Text('Cancel'),
           ),
+          // Exit button
           TextButton(
-            onPressed: () {
-              // First close the dialog
-              Navigator.of(context).pop(true);
-            },
-            child: Text(
-              'Exit',
-              style: TextStyle(
-                color: Colors.red,
-                letterSpacing: 0.5,
-              ),
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
             ),
+            child: Text('Exit'),
           ),
         ],
       ),
-    ) ?? false;
+    );
   }
 
   void _checkBackgroundTimeSyncOnResume() {

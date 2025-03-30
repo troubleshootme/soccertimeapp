@@ -987,7 +987,10 @@ class AppState with ChangeNotifier {
 
   Future<void> deleteSession(int sessionId) async {
     try {
-      // Delete from Hive
+      // First delete all history entries
+      await HiveSessionDatabase.instance.deleteSessionHistory(sessionId);
+      
+      // Then delete the session itself
       await HiveSessionDatabase.instance.deleteSession(sessionId);
       
       // Reload the sessions list
@@ -1012,8 +1015,12 @@ class AppState with ChangeNotifier {
     // Process the details to ensure all translation keys are resolved
     String processedDetails = details;
     
+    // Special handling for match.match_ended to ensure it's replaced with Match Complete!
+    if (details.contains('match.match_ended')) {
+      processedDetails = details.replaceAll('match.match_ended', 'Match Complete!');
+    }
     // Check if the details contain any unresolved translation keys
-    if (details.contains('match.')) {
+    else if (details.contains('match.')) {
       // If it's a direct translation key, resolve it
       if (details.startsWith('match.')) {
         processedDetails = TranslationService().get(details);
@@ -1346,37 +1353,28 @@ class AppState with ChangeNotifier {
   }
 
   // Add the missing endMatch method definition correctly
-  void endMatch() {
-    // Guard clause - only end match in final period
-    if (session.currentPeriod < session.matchSegments) {
-      return;
-    }
+  Future<void> endMatch() async {
+    if (_session.isMatchComplete) return; // Already ended
     
-    // Only proceed if match is not already marked complete
-    if (session.isMatchComplete) {
-      return;
+    // Set match time to exactly match the match duration for consistency
+    if (_session.enableMatchDuration) {
+      _session.matchTime = _session.matchDuration;
     }
     
     // Stop the match
-    session.matchRunning = false;
-    session.isPaused = true;
-    
-    // Set match time to exactly match the match duration for consistency
-    session.matchTime = session.matchDuration;
-    
-    // Mark the match as complete
-    session.isMatchComplete = true;
+    _session.matchRunning = false;
+    _session.isPaused = true;
     
     // Store currently active players and calculate final time
-    session.activeBeforePause = [];
-    for (var playerName in session.players.keys) {
-      final player = session.players[playerName]!;
+    _session.activeBeforePause = [];
+    for (var playerName in _session.players.keys) {
+      final player = _session.players[playerName]!;
       if (player.active) {
-        session.activeBeforePause.add(playerName);
+        _session.activeBeforePause.add(playerName);
         
         // Calculate final time for active players
         if (player.lastActiveMatchTime != null) {
-          player.totalTime += (session.matchTime - player.lastActiveMatchTime!);
+          player.totalTime += (_session.matchTime - player.lastActiveMatchTime!);
         }
         
         // Reset active flags and last active time
@@ -1385,14 +1383,23 @@ class AppState with ChangeNotifier {
       }
     }
     
+    // Mark the match as complete
+    _session.isMatchComplete = true;
+    
     // Get the final score
-    final score = "${session.teamGoals}-${session.opponentGoals}";
+    final score = "${_session.teamGoals}-${_session.opponentGoals}";
     
-    // Log match end with proper translation and score
-    logMatchEvent("${TranslationService().get('match.match_complete')} (Final Score: $score)", entryType: 'match_end');
+    // Add match end entry to log
+    logMatchEvent("${TranslationService().get('match.match_complete')} ($score)", entryType: 'match_end');
     
-    // Mark that we've properly logged the match end
-    session.matchEndLogged = true;
+    // Set match end logged flag to true
+    _session.matchEndLogged = true;
+    
+    // Save session state
+    await saveSession();
+    
+    // Save to history
+    await saveCurrentSessionToHistory();
     
     notifyListeners();
   }
@@ -1448,7 +1455,7 @@ class AppState with ChangeNotifier {
       final score = "${session.teamGoals}-${session.opponentGoals}";
       
       // Log match end with proper translation and score
-      logMatchEvent("${TranslationService().get('match.match_complete')} (Final Score: $score)", entryType: 'match_end');
+      logMatchEvent("${TranslationService().get('match.match_complete')} ($score)", entryType: 'match_end');
       
       // Mark that we've properly logged the match end
       session.matchEndLogged = true;
@@ -1456,6 +1463,145 @@ class AppState with ChangeNotifier {
       // Save the session to persist the log entry
       saveSession();
       notifyListeners();
+    }
+  }
+
+  // Add these methods for session history
+  
+  // Save the current session to history
+  Future<bool> saveCurrentSessionToHistory() async {
+    try {
+      if (_currentSessionId == null) {
+        print('Cannot save to history: No current session');
+        return false;
+      }
+      
+      // First save the current session state
+      await saveSession();
+      
+      // Get the current session data
+      final sessionData = await HiveSessionDatabase.instance.getSession(_currentSessionId!);
+      if (sessionData == null) {
+        print('Cannot save to history: Failed to retrieve session data');
+        return false;
+      }
+      
+      // Convert session object fields to maps for storage
+      final Map<String, dynamic> enhancedSessionData = Map.from(sessionData);
+      
+      // Add players data
+      final Map<String, dynamic> playersMap = {};
+      _session.players.forEach((name, player) {
+        playersMap[name] = {
+          'name': player.name,
+          'totalTime': player.totalTime,
+          'active': player.active,
+          'lastActiveMatchTime': player.lastActiveMatchTime,
+          'goals': player.goals,
+        };
+      });
+      
+      // Add enhanced data to session data
+      enhancedSessionData['players'] = playersMap;
+      enhancedSessionData['teamGoals'] = _session.teamGoals;
+      enhancedSessionData['opponentGoals'] = _session.opponentGoals;
+      enhancedSessionData['matchTime'] = _session.matchTime;
+      
+      // Convert match log entries to maps
+      final List<Map<String, dynamic>> matchLogMaps = [];
+      for (var entry in _session.matchLog) {
+        matchLogMaps.add(entry.toJson());
+      }
+      
+      // Save to history
+      final result = await HiveSessionDatabase.instance.saveSessionToHistory(
+        enhancedSessionData, 
+        matchLogMaps
+      );
+      
+      print('Session saved to history: $result');
+      return result;
+    } catch (e) {
+      print('Error saving session to history: $e');
+      return false;
+    }
+  }
+  
+  // Get history entries for a session
+  Future<List<Map<String, dynamic>>> getSessionHistory(int sessionId) async {
+    try {
+      final historyEntries = await HiveSessionDatabase.instance.getSessionHistory(sessionId);
+      
+      // Fix any old match end entries with the wrong translation
+      for (var entry in historyEntries) {
+        if (entry.containsKey('match_log') && entry['match_log'] is List) {
+          final matchLog = entry['match_log'] as List;
+          for (var i = 0; i < matchLog.length; i++) {
+            if (matchLog[i] is Map && 
+                matchLog[i]['entryType'] == 'match_end' && 
+                matchLog[i]['details'] != null && 
+                matchLog[i]['details'].toString().contains('match.match_ended')) {
+                  
+              // Extract the score from the original text
+              final originalText = matchLog[i]['details'].toString();
+              final scoreRegex = RegExp(r'\((\d+)-(\d+)\)');
+              final match = scoreRegex.firstMatch(originalText);
+              
+              if (match != null) {
+                final score = "${match.group(1)}-${match.group(2)}";
+                // Replace with the correct text
+                matchLog[i]['details'] = "Match Complete! ($score)";
+                
+                // Update the entry in the database
+                await HiveSessionDatabase.instance.updateHistoryEntry(entry);
+              }
+            }
+          }
+        }
+      }
+      
+      return historyEntries;
+    } catch (e) {
+      print('Error getting session history: $e');
+      return [];
+    }
+  }
+  
+  // Get history entries for the current session
+  Future<List<Map<String, dynamic>>> getCurrentSessionHistory() async {
+    if (_currentSessionId == null) {
+      return [];
+    }
+    return getSessionHistory(_currentSessionId!);
+  }
+  
+  // Delete a history entry
+  Future<bool> deleteHistoryEntry(String historyId) async {
+    try {
+      return await HiveSessionDatabase.instance.deleteHistoryEntry(historyId);
+    } catch (e) {
+      print('Error deleting history entry: $e');
+      return false;
+    }
+  }
+  
+  // Delete all history for a session
+  Future<bool> deleteSessionHistory(int sessionId) async {
+    try {
+      return await HiveSessionDatabase.instance.deleteSessionHistory(sessionId);
+    } catch (e) {
+      print('Error deleting session history: $e');
+      return false;
+    }
+  }
+  
+  // Update a history entry
+  Future<bool> updateHistoryEntry(Map<String, dynamic> historyEntry) async {
+    try {
+      return await HiveSessionDatabase.instance.updateHistoryEntry(historyEntry);
+    } catch (e) {
+      print('Error updating history entry: $e');
+      return false;
     }
   }
 

@@ -2165,11 +2165,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
         if (_isMatchRunning) {
           final shouldPop = await _showExitConfirmationDialog(context);
           if (shouldPop == true) {
-            // End match handled in dialog
-            Navigator.of(context).pop();
+            // Use our method to show session dialog
+            _exitToSessionDialog();
           }
         } else {
-          Navigator.of(context).pop();
+          // Use our method to show session dialog
+          _exitToSessionDialog();
         }
       },
       child: Scaffold(
@@ -2827,7 +2828,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                                                        _matchTimer?.cancel();
                                                        
                                                        Navigator.of(context).pop();
-                                                       Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+                                                       _exitToSessionDialog(); // Show session dialog after exiting
                                                      },
                                                    ),
                                                  ],
@@ -3035,7 +3036,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       builder: (context) => AlertDialog(
         backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
         title: Text(
-          'Exit App?',
+          'Return to Sessions',
           style: TextStyle(
             color: isDark ? Colors.white : Colors.black,
             fontSize: 20,
@@ -3043,7 +3044,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
           ),
         ),
         content: Text(
-          'Do you want to exit the app?',
+          'Do you want to return to the session selection screen?',
           style: TextStyle(
             color: isDark ? Colors.white70 : Colors.black87,
             fontSize: 16,
@@ -3060,11 +3061,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
           ),
           // Exit button
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () {
+              Navigator.pop(context, true);
+              _exitToSessionDialog();
+            },
             style: TextButton.styleFrom(
-              foregroundColor: Colors.red,
+              foregroundColor: Colors.blue,
             ),
-            child: Text('Exit'),
+            child: Text('Return to Sessions'),
           ),
         ],
       ),
@@ -3166,8 +3170,32 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     appState.clearCurrentSession();
     appState.saveSession();
     
-    // Navigate safely back to home screen
+    // Navigate safely back to home screen, where the session dialog will be shown
     Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+  }
+  
+  // Add this method to exit to session dialog
+  void _exitToSessionDialog() {
+    final appState = Provider.of<AppState>(context, listen: false);
+    
+    // First make sure timers are stopped
+    _matchTimer?.cancel();
+    
+    // Save current session before exiting
+    appState.saveSession();
+    
+    // Navigate back to home screen but immediately show session dialog
+    Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false).then((_) {
+      // After navigation is complete, show the session dialog
+      // Use a short delay to ensure the screen is fully loaded
+      Future.delayed(Duration(milliseconds: 100), () {
+        if (context.mounted) {
+          // Access the SessionPromptScreen's method to show the dialog
+          // This requires changes to session_prompt_screen.dart too
+          Navigator.of(context).pushNamed('/show_session_dialog');
+        }
+      });
+    });
   }
 }
 

@@ -374,6 +374,7 @@ class _SoccerTimeAppState extends State<SoccerTimeApp> with WidgetsBindingObserv
               '/main': (context) => MainScreen(),
               '/settings': (context) => SettingsScreen(),
               '/session_history': (context) => SessionHistoryScreen(),
+              '/show_session_dialog': (context) => SessionPromptScreen(showDialogImmediately: true),
             },
             debugShowCheckedModeBanner: false,
           );

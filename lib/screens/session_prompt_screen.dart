@@ -8,6 +8,13 @@ import 'main_screen.dart';
 import '../utils/app_themes.dart';
 
 class SessionPromptScreen extends StatefulWidget {
+  final bool showDialogImmediately;
+  
+  const SessionPromptScreen({
+    Key? key,
+    this.showDialogImmediately = false,
+  }) : super(key: key);
+  
   @override
   _SessionPromptScreenState createState() => _SessionPromptScreenState();
 }
@@ -19,8 +26,12 @@ class _SessionPromptScreenState extends State<SessionPromptScreen> {
     
     print('SessionPromptScreen initialized - welcome screen should be visible');
     
-    // Removing automatic session dialog display
-    // Now the dialog will only show when the user clicks the "Open Sessions" button
+    // If showDialogImmediately is true, show the session dialog after the first frame
+    if (widget.showDialogImmediately) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showSessionDialog();
+      });
+    }
   }
 
   @override

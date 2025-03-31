@@ -146,7 +146,7 @@ class _PlayerTimesScreenState extends State<PlayerTimesScreen> {
         print('Could not retrieve score for history: $e');
       }
     } else {
-      var session = appState.session;
+        var session = appState.session;
       isPaused = session.isPaused;
       matchTime = session.matchTime;
       _teamGoals = session.teamGoals;
@@ -184,8 +184,8 @@ class _PlayerTimesScreenState extends State<PlayerTimesScreen> {
       }
     }
 
-    return Scaffold(
-      appBar: AppBar(
+        return Scaffold(
+          appBar: AppBar(
         title: Text(cleanTitle),
         backgroundColor: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
         actions: [
@@ -349,7 +349,7 @@ class _PlayerTimesScreenState extends State<PlayerTimesScreen> {
                                         ? player.totalTime 
                                         : (player.active && !isPaused && player.lastActiveMatchTime != null)
                                             ? player.totalTime + (matchTime - player.lastActiveMatchTime!)
-                                            : player.totalTime;
+                        : player.totalTime;
                                     
                                     return Container(
                                       padding: const EdgeInsets.symmetric(vertical: 12.0),
@@ -403,13 +403,13 @@ class _PlayerTimesScreenState extends State<PlayerTimesScreen> {
                                     );
                                   },
                                 ),
-                          ),
-                        ],
                       ),
-                    ),
+                    ],
                   ),
                 ),
               ),
+            ),
+          ),
             ],
           ),
           // Show loading indicator when exporting PDF

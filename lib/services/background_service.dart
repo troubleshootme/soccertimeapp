@@ -173,7 +173,9 @@ class BackgroundService {
 
   @pragma('vm:entry-point')
   void startBackgroundTimer(AppState appState) {
+    // Cancel any existing background timer to avoid duplicates
     _backgroundTimer?.cancel();
+    _backgroundTimer = null;
     
     // Reset event flags
     _periodEndDetected = false;
@@ -181,6 +183,9 @@ class BackgroundService {
     
     // Store initial timestamp when starting the background timer
     _lastBackgroundTimestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    
+    // Very important: Update appState's lastUpdateTime to match our start time
+    // This ensures synchronization between foreground and background timers
     appState.session.lastUpdateTime = _lastBackgroundTimestamp;
     
     print("--- BG Timer Starting ---");
@@ -221,14 +226,25 @@ class BackgroundService {
       }
     }
     
+    // Start a new background timer that ticks every second
     _backgroundTimer = Timer.periodic(Duration(seconds: 1), (timer) {
       if (appState.session.matchRunning && !appState.session.isPaused) {
         final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
         final lastUpdate = appState.session.lastUpdateTime ?? now;
+        
+        // Calculate elapsed time since last update
         final elapsed = now - lastUpdate;
 
+        // Only update if time has actually elapsed
         if (elapsed > 0) {
-          // Get current match time from app state
+          // IMPORTANT: We do not update the match time here - that would lead to double-counting
+          // Instead we only update the lastUpdateTime so the foreground sync can calculate
+          // the correct elapsed time
+          
+          // Update the lastUpdateTime to now
+          appState.session.lastUpdateTime = now;
+          
+          // Get current match time from app state (unchanged)
           final currentMatchTime = appState.session.matchTime;
           
           // Calculate period boundary information
@@ -299,7 +315,7 @@ class BackgroundService {
             appState.session.isPaused = true;
             appState.session.matchRunning = false;
           } else {
-            // Just update notification text periodically
+            // Just update notification text periodically (every 5 seconds or on multiples of 5)
             if (elapsed >= 5 || currentMatchTime % 5 == 0) {
               _updateBackgroundNotification(
                 _getMatchTimeNotificationText(currentMatchTime, currentPeriodEndTime, appState.session.currentPeriod, appState.session.matchSegments)
@@ -346,6 +362,9 @@ class BackgroundService {
 
   // Sync time when app resumes
   void syncTimeOnResume(AppState appState) {
+    // IMPORTANT: Stop the background timer FIRST to prevent double-counting
+    stopBackgroundTimer();
+    
     // Use AppState's lastUpdateTime directly
     final lastUpdateTimeBeforeBackground = appState.session.lastUpdateTime;
     final matchTimeBeforeSync = appState.session.matchTime; // Capture time before sync
@@ -360,29 +379,58 @@ class BackgroundService {
     print('  MatchTimePreSync: $matchTimeBeforeSync');
     // --- END Detailed Logging ---
 
-
     if (lastUpdateTimeBeforeBackground != null) {
-      // Calculate elapsed time since the *last update before background*
+      // Calculate elapsed time since the *last update by background timer*
+      // The background timer only updates lastUpdateTime but not matchTime
       final elapsedInBackground = nowSecs - lastUpdateTimeBeforeBackground;
 
       print('  Elapsed In BG: $elapsedInBackground secs');
 
       if (elapsedInBackground > 0) {
-        // Calculate new time based on time *before* sync
-        final newMatchTime = matchTimeBeforeSync + elapsedInBackground;
+        // In the new approach, the background timer only updates lastUpdateTime
+        // So we need to calculate the elapsed time properly here
+        int newMatchTime = matchTimeBeforeSync + elapsedInBackground;
+        
+        // Sanity check to avoid large jumps
+        if (_lastBackgroundTimestamp != null) {
+          // How much time has actually passed since background mode started
+          final timeSinceBackgroundStarted = nowSecs - _lastBackgroundTimestamp!;
+          print('  Time since background started: $timeSinceBackgroundStarted s');
+          
+          // If the background timestamp is more recent than lastUpdateTime,
+          // use that for a more accurate measure
+          if (_lastBackgroundTimestamp! > lastUpdateTimeBeforeBackground) {
+            final betterElapsed = nowSecs - _lastBackgroundTimestamp!;
+            print('  Using more accurate background timestamp for sync');
+            print('  Better elapsed time: $betterElapsed s');
+            newMatchTime = matchTimeBeforeSync + betterElapsed;
+          }
+        }
 
         // --- More Logging ---
         print('  Calculated New Time: $newMatchTime');
         if (newMatchTime < matchTimeBeforeSync) {
            print('  *** WARNING: Synced time decreased! Old: $matchTimeBeforeSync, New: $newMatchTime ***');
+           // Don't allow time to go backwards
+           newMatchTime = matchTimeBeforeSync;
+        }
+        
+        // Sanity check - make sure we don't have an unreasonable time jump
+        // If more than 30 seconds elapsed, log a warning (but still apply it)
+        if (newMatchTime - matchTimeBeforeSync > 30) {
+          print('  *** WARNING: Large time jump detected: ${newMatchTime - matchTimeBeforeSync} seconds ***');
         }
         // --- End More Logging ---
 
         // Apply the sync adjustment directly to AppState
         appState.session.matchTime = newMatchTime;
+        
         // Update player times based on elapsed time during background
-        appState.updatePlayerTimesForBackgroundSync(elapsedInBackground); // Need this new method in AppState
-
+        // Use the same time adjustment we used for the match time
+        int adjustedElapsed = newMatchTime - matchTimeBeforeSync;
+        appState.updatePlayerTimesForBackgroundSync(adjustedElapsed);
+        
+        print('  Successfully updated match time: $matchTimeBeforeSync -> $newMatchTime (+$adjustedElapsed s)');
       } else if (elapsedInBackground < 0) {
         print('  *** WARNING: Negative elapsed time calculated during sync! Clock jump? ***');
         // Don't adjust time backwards
@@ -395,8 +443,9 @@ class BackgroundService {
 
     // CRITICAL: Update lastUpdateTime to NOW, regardless of sync result
     appState.session.lastUpdateTime = nowSecs;
+    // Also reset _lastBackgroundTimestamp to help with future calculations
+    _lastBackgroundTimestamp = null;
     print('  Updated lastUpdateTime to: $nowSecs');
-
   }
 
   void stopBackgroundTimer() {

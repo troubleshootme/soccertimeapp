@@ -432,7 +432,7 @@ class BackgroundService {
     }
   }
 
-  // Method to update match time using wall-clock delta and fractional seconds
+  // Method to update match time using wall-clock precision anchored to reference time on EVERY tick
   void _updateMatchTimeWithWallClock() {
     // Early return if timer is not active (timer is paused)
     if (!_isTimerActive) return;
@@ -441,45 +441,43 @@ class BackgroundService {
     final now = DateTime.now();
     final nowMillis = now.millisecondsSinceEpoch;
 
-    // Initialize references if null (should only happen on first ever tick)
+    // Initialize references if null
     if (_referenceWallTime == null) {
       print("WARN: Initializing timing references in tick.");
       _referenceWallTime = now.subtract(Duration(milliseconds: 100)); 
       _referenceMatchTime = _currentMatchTime;
-      _lastTickExpectedTotalSeconds = _currentMatchTime.toDouble(); // Initialize based on current match time
-      _lastUpdateTimestamp = nowMillis;
+      _lastUpdateTimestamp = nowMillis; // Still useful for sanity checks
+      // No need to initialize _lastTickExpectedTotalSeconds or _partialSeconds here
     }
 
-    // Calculate current expected total seconds based on the stable reference
-    // Assert non-null here since we initialize above
+    // Calculate elapsed time since WALL CLOCK REFERENCE point
     final elapsedMillisSinceReference = nowMillis - _referenceWallTime!.millisecondsSinceEpoch;
     if (elapsedMillisSinceReference < 0) { 
       print("WARN: Negative elapsed time since reference ($elapsedMillisSinceReference ms), resetting references.");
       _referenceWallTime = now;
       _referenceMatchTime = _currentMatchTime;
       _lastUpdateTimestamp = nowMillis;
-      _partialSeconds = 0.0;
+      // Reset other related state if needed, though sync should handle this primarily
+      _partialSeconds = 0.0; 
       _lastTickExpectedTotalSeconds = _currentMatchTime.toDouble();
       return; 
     }
-    final currentExpectedTotalSeconds = _referenceMatchTime + (elapsedMillisSinceReference / 1000.0);
+    final elapsedSecsSinceReference = elapsedMillisSinceReference / 1000.0;
 
-    // Calculate the DELTA in expected time since the LAST tick
-    final deltaExpectedSeconds = currentExpectedTotalSeconds - _lastTickExpectedTotalSeconds;
-
-    // Add this precise delta to the partial seconds accumulator
-    _partialSeconds += deltaExpectedSeconds;
+    // Calculate the authoritative expected integer match time using round() for closer alignment
+    final targetMatchTime = (_referenceMatchTime + elapsedSecsSinceReference).round();
 
     // Store original match time for comparison
     final originalMatchTime = _currentMatchTime;
 
-    // Update match time if accumulated partial seconds cross the 1.0 threshold
-    if (_partialSeconds >= 1.0) {
-      final wholeSecondsToAdd = _partialSeconds.floor();
-      _currentMatchTime += wholeSecondsToAdd;
-      _partialSeconds -= wholeSecondsToAdd; // Subtract the integer part
-
-      print("Tick Update: $originalMatchTime → $_currentMatchTime (+${wholeSecondsToAdd}s, Delta: ${deltaExpectedSeconds.toStringAsFixed(3)}s, Partial: ${_partialSeconds.toStringAsFixed(3)}s)");
+    // Update match time only if the authoritative target time is ahead
+    if (targetMatchTime > _currentMatchTime) {
+      final secondsToAdd = targetMatchTime - _currentMatchTime;
+      _currentMatchTime = targetMatchTime;
+      // Reduce logging frequency - maybe log only every 5-10 seconds?
+      if (_currentMatchTime % 5 == 0) { 
+        print("Tick Update: $originalMatchTime → $_currentMatchTime (+${secondsToAdd}s, Ref: ${_referenceWallTime!.second}s/${_referenceMatchTime}s, Now: ${now.second}s)");
+      }
 
       // Update AppState immediately
       if (_currentAppState != null) {
@@ -488,16 +486,16 @@ class BackgroundService {
       }
       // Notify listeners
       _notifyTimeUpdate(_currentMatchTime);
-    } else if (_partialSeconds < 0) {
-        // Safety check: if partial seconds somehow becomes negative, reset it.
-        print("WARN: Partial seconds negative ($_partialSeconds), resetting to 0.");
-        _partialSeconds = 0.0;
+    } else if (targetMatchTime < _currentMatchTime) {
+        // This case indicates a significant issue or time jump backwards, likely requires a sync reset
+        print("WARN: Target match time ($targetMatchTime) is LESS than current time ($_currentMatchTime). Waiting for next sync.");
+        // Don't reset references here, let the periodic sync handle it cleanly.
     }
 
-    // IMPORTANT: Update the expected time tracker for the next tick calculation
-    _lastTickExpectedTotalSeconds = currentExpectedTotalSeconds;
-    // Update the last actual timestamp too
+    // Update the last actual timestamp
     _lastUpdateTimestamp = nowMillis;
+
+    // No need to update _lastTickExpectedTotalSeconds or _partialSeconds in this approach
   }
 
   // Replace the _performAbsoluteTimeSync method with an authoritative version
@@ -601,18 +599,22 @@ class BackgroundService {
         // Set the authoritative match time
         int newMatchTime = expectedMatchTime;
         
-        // CRITICAL FIX: Cap the time at period end if needed
+        // CRITICAL FIX: Cap the time ONLY if match duration is enabled AND the period end hasn't already been handled
         final currentPeriodEndTime = _getPeriodEndTime(appState);
-        if (_periodEndDetected || newMatchTime >= currentPeriodEndTime) {
+        if (appState.session.enableMatchDuration &&
+            !_periodEndDetected && 
+            newMatchTime >= currentPeriodEndTime) { 
           newMatchTime = currentPeriodEndTime;
-          print('  Capping time at period end: $currentPeriodEndTime');
+          print('  Capping time at period end: $currentPeriodEndTime (period end detected during sync)');
           _periodEndDetected = true;
         }
         
-        // CRITICAL FIX: Cap the time at match end if needed
-        if (_matchEndDetected || newMatchTime >= appState.session.matchDuration) {
+        // CRITICAL FIX: Cap the time ONLY if match duration is enabled AND the match end hasn't already been handled
+        if (appState.session.enableMatchDuration &&
+            !_matchEndDetected && 
+            newMatchTime >= appState.session.matchDuration) { 
           newMatchTime = appState.session.matchDuration;
-          print('  Capping time at match end: ${appState.session.matchDuration}');
+          print('  Capping time at match end: ${appState.session.matchDuration} (match end detected during sync)');
           _matchEndDetected = true;
         }
         

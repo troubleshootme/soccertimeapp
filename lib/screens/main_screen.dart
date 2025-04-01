@@ -52,6 +52,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   bool _needsUIUpdate = false;
   DateTime _lastUIUpdate = DateTime.now();
 
+  // Track exact timestamps for background transitions
+  int? _backgroundEntryTime;
+  int? _lastKnownMatchTime;
+
   // Getter to check if match is running
   bool get _isMatchRunning => _matchTimer != null && !Provider.of<AppState>(context, listen: false).session.isMatchComplete;
 
@@ -66,8 +70,53 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    
     // Set the context for the AudioService
     _audioService.setContext(context);
+    
+    // Get AppState
+    final appState = Provider.of<AppState>(context, listen: true);
+    
+    // Check if this is initial setup
+    if (!_isInitialized) {
+      _isInitialized = true;
+      
+      // Do initial setup if needed
+      if (appState.session.matchRunning && !appState.session.isPaused && !appState.session.isSetup) {
+        // Match is already running, start the timer
+        print("Match is already running at initialization, starting timers");
+        _startMatchTimer();
+      }
+    }
+    
+    // Check if we should reset background timers when session is reset
+    _checkBackgroundTimersAfterReset(appState);
+  }
+  
+  // CRITICAL FIX: New method to detect session resets and ensure timers are stopped
+  void _checkBackgroundTimersAfterReset(AppState appState) {
+    // Check for conditions that indicate a session reset
+    if (!appState.session.matchRunning && 
+        appState.session.matchTime == 0 &&
+        appState.session.isSetup) {
+      
+      // Double-check that background timer is stopped
+      if (_backgroundService != null && _backgroundService.isTimerActive()) {
+        print("Detected session reset state: stopping background timer");
+        _backgroundService.stopBackgroundTimer();
+        
+        // Cancel UI refresh timer as well
+        _matchTimer?.cancel();
+        _matchTimer = null;
+        
+        // Reset UI state
+        _safeSetState(() {
+          _matchTime = 0;
+          _matchTimeNotifier.value = 0;
+          _isPaused = false;
+        });
+      }
+    }
   }
   
   void _initializeScreen() {
@@ -95,270 +144,105 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     _backgroundService.initialize().then((_) {
       // Restore the background service if it was previously running
       _backgroundService.restorePreviousState();
+      
+      // Register for time updates from the background service
+      _backgroundService.addTimeUpdateListener(_onTimeUpdate);
+      _backgroundService.addPeriodEndListener(_onPeriodEnd);
+      _backgroundService.addMatchEndListener(_onMatchEnd);
     });
     
     // Use Future.microtask instead of post-frame callback for safer initialization
     Future.microtask(() {
       if (mounted) {
         _loadInitialState();
+        // Mark initialization as complete
+        setState(() {
+          _isInitialized = true;
+        });
       }
     });
   }
   
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      // App came back to foreground - refresh state
-      if (mounted && _isInitialized) {
-        final appState = Provider.of<AppState>(context, listen: false);
-        
-        print("App resumed, current match time: ${appState.session.matchTime}, running: ${appState.session.matchRunning}, paused: ${appState.session.isPaused}");
-        
-        // If the background service is running, stop the background timer and sync the time
-        if (_backgroundService.isRunning) {
-          // Check if period/match end events were detected in background
-          final periodEndOccurred = _backgroundService.periodEndDetected;
-          final matchEndOccurred = _backgroundService.matchEndDetected;
-          
-          // First sync the time that passed in the background and check for match end
-          _checkBackgroundTimeSyncOnResume();
-          
-          // Wait a short moment to ensure sync is completed
-          Future.delayed(Duration(milliseconds: 300), () {
-            // Then stop the background timer
-            _backgroundService.stopBackgroundTimer();
-            
-            // Get updated match time after sync
-            final updatedMatchTime = appState.session.matchTime;
-            print("After sync, match time is now: $updatedMatchTime");
-            
-            // Properly restore the match time from saved state
-            _safeSetState(() {
-              // Make sure the local match time is in sync with the saved session match time
-              _matchTime = updatedMatchTime; 
-              _matchTimeNotifier.value = updatedMatchTime;
-              
-              // Make sure pause state is in sync with session state
-              _isPaused = appState.session.isPaused;
-              
-              // Special handling for final period transition
-              // If we're in the final period and just came from transition, ensure clean timer state
-              final isInFinalPeriod = appState.session.currentPeriod == appState.session.matchSegments;
-              if (isInFinalPeriod && appState.session.matchRunning && !appState.session.isPaused) {
-                print("Detected resumed in final period - ensuring clean timer state");
-                // Cancel timer first if it exists
-                _matchTimer?.cancel();
-                _matchTimer = null;
-                
-                // Force session state to be running and not paused
-                appState.session.matchRunning = true;
-                appState.session.isPaused = false;
-                _isPaused = false;
-              }
-            });
-            
-            // Check if a period ended while in background first
-            // Do this BEFORE showing notifications to ensure proper UI state
-            _checkPeriodEnd();
-            
-            // Only show period end notification if it occurred in background
-            // AND the dialog was not shown (periodsTransitioning should be false after checkPeriodEnd if dialog was shown)
-            if (periodEndOccurred && !appState.periodsTransitioning && !appState.session.hasWhistlePlayed) {
-              _showPeriodEndNotification(appState.session.currentPeriod);
-            }
-            
-            // Only show match end notification if it occurred in background 
-            // AND dialog was not shown
-            if (matchEndOccurred && !appState.session.isMatchComplete) {
-              _showMatchEndNotification();
-            }
-            
-            // Reset event flags after handling them
-            _backgroundService.resetEventFlags();
-            
-            // Restart the UI timer if the match is still running
-            if (appState.session.matchRunning && !appState.session.isPaused) {
-              _startMatchTimer();
-            }
-            
-            // Force UI refresh
-            setState(() {});
-          });
-        } else {
-          // Properly restore the match time from saved state
-          _safeSetState(() {
-            // Make sure the local match time is in sync with the saved session match time
+  // Load initial state from app state
+  void _loadInitialState() {
+    if (!mounted) return;
+    
+    final appState = Provider.of<AppState>(context, listen: false);
+    
+    // Get session name
+    setState(() {
+      _sessionName = appState.session.sessionName;
             _matchTime = appState.session.matchTime;
             _matchTimeNotifier.value = _matchTime;
-            
-            // Make sure pause state is in sync with session state
             _isPaused = appState.session.isPaused;
           });
           
-          // Check if a period ended while in background
-          _checkPeriodEnd();
-          
-          // Restart the UI timer if the match is still running
-          if (appState.session.matchRunning && !appState.session.isPaused) {
-            _startMatchTimer();
-          }
-          
-          // Force UI refresh
-          setState(() {});
-        }
-      }
-    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      // App went to background - save state but don't pause timers
-      if (mounted && _isInitialized) {
-        final appState = Provider.of<AppState>(context, listen: false);
-        
-        // Make sure the session match time is updated before saving
-        appState.session.matchTime = _matchTime;
-        
-        // Update the lastUpdateTime to the current time before going to background
-        appState.session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-        
-        // Save the current state to persist it
-        appState.saveSession();
-        
-        // Start background service if the match is running and not paused
-        if (appState.session.matchRunning && !appState.session.isPaused) {
-          // Start the background service to keep timers running
-          print("Starting background service for match...");
-          _backgroundService.startBackgroundService().then((success) {
-            if (success) {
-              print("Background service started successfully, starting timer...");
-              // Start the background timer to continue updating match time
-              _backgroundService.startBackgroundTimer(appState);
-            } else {
-              print("Failed to start background service");
-            }
-          });
-        }
-      }
+    print("Initial match time loaded: $_matchTime");
+  }
+  
+  // Handler for time updates from the BackgroundService
+  void _onTimeUpdate(int newMatchTime) {
+    if (mounted) {
+      setState(() {
+        _matchTime = newMatchTime;
+        _matchTimeNotifier.value = newMatchTime;
+      });
     }
   }
   
-  void _loadInitialState() async {
-    if (!mounted) return;
+  // Handler for period end events from BackgroundService
+  void _onPeriodEnd() {
+    print("\n\n🔔🔔🔔 _onPeriodEnd handler called in MainScreen! 🔔🔔🔔\n\n");
     
-    try {
-      print('Loading initial state...');
+    if (!mounted) {
+      print("CRITICAL ERROR: _onPeriodEnd called but widget not mounted!");
+      return;
+    }
+    
       final appState = Provider.of<AppState>(context, listen: false);
-      
-      // First load the session to get the session name and other metadata
-      _safeSetState(() {
-        // Determine the session name to display in the UI
-        String nameToDisplay = '';
-        
-        // First priority: Use currentSessionPassword if available
-        if (appState.currentSessionPassword != null && appState.currentSessionPassword!.isNotEmpty) {
-          nameToDisplay = appState.currentSessionPassword!;
-        } 
-        // Second priority: Use session object name
-        else if (appState.session.sessionName.isNotEmpty) {
-          nameToDisplay = appState.session.sessionName;
-        }
-        // Last resort: Use a default with the session ID
-        else if (appState.currentSessionId != null) {
-          // Check in sessions list for a better name
-          final sessionInfo = appState.sessions.firstWhere(
-            (s) => s['id'] == appState.currentSessionId,
-            orElse: () => {'name': 'Session ${appState.currentSessionId}'}
-          );
-          nameToDisplay = sessionInfo['name'] ?? 'Session ${appState.currentSessionId}';
-        } else {
-          nameToDisplay = 'New Session';
-        }
-        
-        // Set the session name for display
-        _sessionName = nameToDisplay;
-      });
-
-      // Now reset the session state
-      _safeSetState(() {
-        // Reset UI state
-        _isPaused = false;
-        _matchTime = 0;
-        _matchTimeNotifier.value = 0;
-        
-        // Reset all timer-related variables
-        _lastUpdateTimestamp = null;
-        _lastRealTimeCheck = null;
-        _initialStartTime = null;
-        _accumulatedDrift = 0;
-        _isUpdatingTime = false;
-      });
-      
-      // Reset app state
-      appState.resetSession();
-      
-      // Set initialized flag
-      _isInitialized = true;
-      
-      // Start pulsing animation if there are no players
-      if (appState.players.isEmpty) {
-        _pulseController.repeat(reverse: true);
-      } else {
-        _pulseController.stop();
-      }
-      
-      // Show a snackbar indicating fresh session start
+    print("Current period in appState: ${appState.session.currentPeriod}");
+    print("periodsTransitioning flag: ${appState.periodsTransitioning}");
+    
+    // Force UI update to ensure we have the latest state
+    setState(() {
+      _isPaused = true; // Ensure we show as paused
+    });
+    
+    // Use addPostFrameCallback to ensure dialog appears after any pending UI updates
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  Icon(Icons.refresh, color: Colors.white),
-                  SizedBox(width: 8),
-                  Text('Session loaded and reset'),
-                ],
-              ),
-              duration: Duration(seconds: 2),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.blue.shade700,
-            ),
-          );
-        }
-      });
-      
-    } catch (e) {
-      if (mounted) {
-        _safeSetState(() {
-          _isInitialized = true;
-        });
-        
-        // Show a snackbar with the error
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Error loading session data: ${e.toString()}'),
-                duration: Duration(seconds: 3),
-                action: SnackBarAction(
-                  label: 'Return',
-                  onPressed: () {
-                    Navigator.of(context).pushReplacementNamed('/');
-                  },
-                ),
-              ),
-            );
-          }
-        });
+        print("Showing period end dialog for period ${appState.session.currentPeriod}");
+        // Show period end dialog directly using our dedicated method
+        _showPeriodEndDialog(context, appState.session.currentPeriod);
+      } else {
+        print("CRITICAL ERROR: Widget no longer mounted in post-frame callback!");
       }
+    });
+  }
+  
+  // Handler for match end events from BackgroundService
+  void _onMatchEnd() {
+      if (mounted) {
+      // Show match end dialog
+      _showMatchEndDialog(context);
     }
   }
 
   @override
   void dispose() {
-    // Remove the lifecycle observer
+    // Cleanup
+    _matchTimer?.cancel();
+    _pulseController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     
-    // Clean up timers and controllers
-    _pulseController.dispose();
-    _matchTimer?.cancel();
-    _addPlayerFocusNode.dispose();
+    // Remove listeners from background service
+    _backgroundService.removeTimeUpdateListener(_onTimeUpdate);
+    _backgroundService.removePeriodEndListener(_onPeriodEnd);
+    _backgroundService.removeMatchEndListener(_onMatchEnd);
+    
+    // Note: We don't stop the background service on dispose
+    // as it might still be needed for background operation
+    
     super.dispose();
   }
 
@@ -381,170 +265,261 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     }
   }
 
-  void _startMatchTimer() {
-    _matchTimer?.cancel();
+  void _startMatchTimer({int initialDelay = 500}) {
     final appState = Provider.of<AppState>(context, listen: false);
 
-    // Ensure initial timestamp is set correctly when timer starts/resumes
-    _lastUpdateTimestamp = DateTime.now().millisecondsSinceEpoch;
-    _lastRealTimeCheck = _lastUpdateTimestamp; // Initialize real time check
-    appState.session.lastUpdateTime = _lastUpdateTimestamp! ~/ 1000; // Update AppState timestamp
-
-    print('UI Timer Started/Resumed at: $_lastUpdateTimestamp ms (${appState.session.lastUpdateTime} s)'); // Log start time
-
-    // Change the Duration here from milliseconds: 200 to seconds: 1
-    _matchTimer = Timer.periodic(Duration(seconds: 1), (timer) { // NOW 1 SECOND INTERVAL
-      if (!_isPaused && mounted) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        // Use _lastUpdateTimestamp for UI timer calculation
-        final lastUpdate = _lastUpdateTimestamp ?? now;
-        final elapsedMillis = now - lastUpdate;
-
-        // Process only if roughly a second or more has passed (or clock jumped back)
-        if (elapsedMillis >= 950 || elapsedMillis < 0) { // Allow a small threshold < 1000ms
-          if (elapsedMillis < 0) {
-            // Handle potential clock adjustments
-            print("Warning: UI Timer clock adjustment detected (elapsed time negative: $elapsedMillis). Resetting last update time.");
-            _lastUpdateTimestamp = now;
-            appState.session.lastUpdateTime = now ~/ 1000;
-            // Skip the rest of the update for this tick to avoid bad calculations
+    // CRITICAL FIX: Add a check for setup mode to prevent timer from running prematurely
+    if (appState.session.isSetup) {
+      print("WARNING: Attempted to start match timer while in setup mode - this should not happen");
+      return;
+    }
+    
+    // Cancel any existing foreground timer first
+    _matchTimer?.cancel();
+    _matchTimer = null;
+    
+    // Make sure background service is initialized
+    _backgroundService.initialize().then((_) {
+      print("Starting match timer - isSetup=${appState.session.isSetup}, isPaused=${appState.session.isPaused}");
+      
+      // Start the background timer with current app state
+      _backgroundService.startBackgroundTimer(appState);
+      
+      // Set UI state to match timer state
+      setState(() {
+        _isPaused = false;
+      });
+      
+      // Update app state to show match is running and not paused
+      appState.session.matchRunning = true;
+      appState.session.isPaused = false;
+      
+      // Start a new UI refresh timer with the specified initial delay
+      _matchTimer = Timer.periodic(Duration(milliseconds: initialDelay), (timer) {
+        // Check if we should stop the UI timer
+        if (!mounted) {
+          print("UI not mounted, cancelling UI refresh timer");
+          timer.cancel();
             return;
           }
 
-          // Update app state with elapsed time
-          appState.updateMatchTimer(elapsedMillis: elapsedMillis.toDouble());
+        // Check if app is paused - don't update if paused
+        if (_isPaused || appState.session.isPaused) {
+          // Don't update times while paused
+          return;
+        }
+
+        // Get background timer status
+        final bgIsActive = _backgroundService.isTimerActive();
+        final bgCurrentTime = _backgroundService.getCurrentMatchTime();
+        
+        // CRITICAL FIX: Check if values differ significantly, which would indicate a sync problem
+        if (_matchTime != bgCurrentTime) {
+          // Update app state too, to ensure consistency
+          appState.session.matchTime = bgCurrentTime;
           
-          // Check for period end BEFORE checking match end
-          // Only check if match is running and not paused
-          if (appState.session.matchRunning && !appState.session.isPaused && appState.shouldEndPeriod()) {
-            print("UI Timer detected period end condition");
-            print("Current time: ${appState.session.matchTime}, Period: ${appState.session.currentPeriod}");
-            
-            // Calculate exact period end time
+          // Update UI
+          setState(() {
+            _matchTime = bgCurrentTime;
+            _matchTimeNotifier.value = bgCurrentTime;
+          });
+        }
+        
+        // CRITICAL ADDITION: Direct period end check in UI thread
+        // This ensures we detect period end even if background notification fails
+        if (appState.session.enableMatchDuration && 
+            appState.session.matchRunning && 
+            !appState.session.isPaused && 
+            !appState.session.hasWhistlePlayed &&
+            appState.session.currentPeriod < appState.session.matchSegments) {
+          
+          // Calculate period end time
             final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
-            final exactPeriodEndTime = periodDuration * appState.session.currentPeriod;
+          final currentPeriodEndTime = periodDuration * appState.session.currentPeriod;
+          
+          // Check if we've reached period end
+          if (_matchTime >= currentPeriodEndTime) {
+            print("\n\n🚨🚨🚨 PERIOD END DETECTED IN UI THREAD! 🚨🚨🚨\n\n");
             
-            // Set the time to exactly the period end time
-            appState.updateMatchTime(exactPeriodEndTime);
-            _updateMatchTime(exactPeriodEndTime, forceUpdate: true);
+            // Stop checking immediately
+            timer.cancel();
             
-            // End the period
+            // End the period through app state
             appState.endPeriod();
             
-            // Cancel the timer
-            _matchTimer?.cancel();
-            _matchTimer = null;
-
-            // Sound and haptic feedback
+            // Play whistle sound for period end
             _audioService.playWhistle();
+            
+            // Provide haptic feedback
             _hapticService.periodEnd(context);
             
-            // Show period end dialog immediately
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (context) => PeriodEndDialog(
-                    onNextPeriod: () {
-                      print("Starting next period via dialog");
-                      appState.startNextPeriod();
-                      _safeSetState(() {
-                        _isPaused = false;
-                      });
-                      _startMatchTimer();
-                      Navigator.of(context).pop();
-                    },
-                  ),
-                );
-              }
-            });
-            
-            return;
+            // Show the period end dialog
+            _showPeriodEndDialog(context, appState.session.currentPeriod);
           }
+        }
+        
+        // CRITICAL ADDITION: Direct match completion check in UI thread
+        // This ensures we detect match completion even if background notification fails
+        if (appState.session.enableMatchDuration && 
+            appState.session.matchRunning && 
+            !appState.session.isPaused && 
+            !appState.session.isMatchComplete &&
+            appState.session.currentPeriod >= appState.session.matchSegments) {
           
-          // Check for match end condition
-          final session = appState.session;
-          final isFinalPeriod = session.currentPeriod == session.matchSegments;
-          if (session.matchRunning && !session.isPaused && 
-              isFinalPeriod && session.enableMatchDuration && 
-              session.matchTime >= session.matchDuration && 
-              !session.isMatchComplete) {
-                
-            print("UI Timer detected match end condition");
+          // Check if we've reached match end time
+          if (_matchTime >= appState.session.matchDuration) {
+            print("\n\n🏆🏆🏆 MATCH COMPLETION DETECTED IN UI THREAD! 🏆🏆🏆\n\n");
             
-            // Ensure the match time is exactly at the match duration for consistency
-            appState.updateMatchTime(session.matchDuration);
-            _updateMatchTime(session.matchDuration, forceUpdate: true);
+            // Stop checking immediately
+            timer.cancel();
             
-            // Debug the state before ending the match
-            print("MATCH END DEBUG: Before endMatch - Time=${session.matchTime}, Duration=${session.matchDuration}, Period=${session.currentPeriod}/${session.matchSegments}, Complete=${session.isMatchComplete}");
-            
+            // End the match through app state
             appState.endMatch();
             
-            // Verify match was correctly ended
-            print("MATCH END DEBUG: After endMatch - isMatchComplete=${appState.session.isMatchComplete}");
-            
-            // Debug the match log entries
-            print("MATCH LOG DEBUG: Current log entries: ${appState.session.matchLog.length}");
-            for (int i = 0; i < appState.session.matchLog.length; i++) {
-              final entry = appState.session.matchLog[i];
-              print("MATCH LOG ENTRY $i: Time=${entry.matchTime}, Details=${entry.details}, Type=${entry.entryType}");
-            }
-            
-            // Sound and haptic feedback
+            // Play whistle sound for match end
             _audioService.playWhistle();
+            
+            // Provide haptic feedback
             _hapticService.matchEnd(context);
             
-            // Show match end notification
-            _showMatchEndNotification();
-            
-            // Show match end dialog
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (context) => PeriodEndDialog(
-                    // Add isMatchEnd parameter to indicate match completion
-                    isMatchEnd: true,
-                    onOk: () {
-                      print("MATCH END DIALOG: Processing OK button click for match end");
-                      final appState = Provider.of<AppState>(context, listen: false);
-                      
-                      // Use the dedicated method to ensure match end is logged
-                      appState.ensureMatchEndLogged();
-                      
-                      // Close the dialog
-                      Navigator.of(context).pop();
-                    },
-                  ),
-                );
-              }
-            });
-            
+            // Show the match end dialog
+            _showMatchEndDialog(context);
+          }
+        }
+      });
+      
+      print("UI refresh timer started after match start");
+    });
+  }
+  
+  void _stopMatchTimer() {
+    // Cancel UI refresh timer
             _matchTimer?.cancel();
             _matchTimer = null;
+
+    // Pause the background timer
+    _backgroundService.pauseTimer();
+    
+    // Update UI state
+    setState(() {
+      _isPaused = true;
+    });
+    
+    // Update app state
+                      final appState = Provider.of<AppState>(context, listen: false);
+    appState.session.isPaused = true;
+  }
+  
+  void _resetMatch() {
+    // Get app state
+    final appState = Provider.of<AppState>(context, listen: false);
+    
+    // Stop timers
+    _matchTimer?.cancel();
+    _matchTimer = null;
+    _backgroundService.stopBackgroundTimer();
+    
+    // Reset match in app state
+    appState.session.matchTime = 0;
+    appState.session.currentPeriod = 1;
+    appState.session.isPaused = true;
+    appState.session.matchRunning = false;
+    
+    // Reset match time
+    _backgroundService.setMatchTime(0);
+    
+    // Update UI
+    setState(() {
+      _matchTime = 0;
+      _matchTimeNotifier.value = 0;
+      _isPaused = true;
+    });
+  }
+  
+  void _togglePlayPause() {
+    final appState = Provider.of<AppState>(context, listen: false);
+    
+    // CRITICAL FIX: Handle transition from setup mode to match running mode
+    if (appState.session.isSetup) {
+      // First check if we have any active players
+      if (!_hasActivePlayer()) {
+        // Show warning snackbar
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.warning_amber_rounded, color: Colors.white),
+                SizedBox(width: 8),
+                Expanded( // Wrap Text with Expanded to prevent overflow
+                  child: Text('Select at least one player to start the match'),
+                ),
+              ],
+            ),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.orange.shade700,
+          ),
+        );
+        return; // Exit early without starting the match
+      }
+      
+      // We're transitioning from setup to match running
+      print("Starting match - transitioning from setup mode to match running");
+      appState.session.isSetup = false;
+      appState.session.matchRunning = true;
+      appState.session.isPaused = false;
+      
+      // Add a match log entry for start
+      appState.logMatchEvent("Match Started", entryType: 'period_transition');
+      
+      // Restart the timer with current state (ensures isSetup=false is seen by timer)
+      _backgroundService.stopBackgroundTimer();
+      _startMatchTimer();
+      
+      // Haptic feedback for match start
+      _hapticService.matchStart(context);
+      
+      setState(() {
+        _isPaused = false;
+      });
+      
             return;
           }
           
-          // Update local match time
-          _updateMatchTime(appState.session.matchTime);
-          
-          // Store the last update timestamp
-          _lastUpdateTimestamp = now;
-          
-          // Check for period end
-          _checkPeriodEnd();
-        }
-        // If elapsedMillis is positive but less than ~950ms, just wait for the next tick
-      } else if (!mounted) {
-        timer.cancel();
-      }
-    });
+    // Normal play/pause toggle (not in setup mode)
+    if (_isPaused) {
+      // Resume the timer
+      _backgroundService.resumeTimer();
+      _startMatchTimer(); // This starts the UI refresh timer
+      
+      // Haptic feedback
+      _hapticService.resumeButton(context);
+      
+      setState(() {
+        _isPaused = false;
+      });
+      
+      // Update app state
+      appState.session.matchRunning = true;
+      appState.session.isPaused = false;
+    } else {
+      // Pause the timer
+      _stopMatchTimer();
+      _backgroundService.pauseTimer(); // Make sure background timer is paused
+      
+      // Haptic feedback
+      _hapticService.matchPause(context);
+      
+      setState(() {
+        _isPaused = true;
+      });
+      
+      // Update app state
+      appState.session.isPaused = true;
+      appState.session.matchRunning = false; // Ensure match running flag is set to false
+    }
   }
 
-  // Check if the period has ended or needs to end
   void _checkPeriodEnd() {
     if (!mounted) return;
     
@@ -607,37 +582,24 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                     print("PERIOD UI CHECK: Transition to FINAL period detected!");
                   }
                   
+                  // Start the next period
                   appState.startNextPeriod();
                   
-                  // IMPORTANT: Use a small delay to ensure state is fully updated
-                  Future.delayed(Duration(milliseconds: 50), () {
-                    _safeSetState(() {
-                      _isPaused = false;
-                      // Use the latest value from app state to ensure correct time
-                      _matchTime = appState.session.matchTime;
-                      _matchTimeNotifier.value = _matchTime;
-                      
-                      // Force extra state sync for final period transition
-                      if (isTransitioningToFinalPeriod) {
-                        // Cancel any existing timer first to ensure clean start
-                        _matchTimer?.cancel();
-                        _matchTimer = null;
-                        print("PERIOD UI CHECK: Special handling for final period, forcing fresh timer start");
-                      }
-                      
-                      print("PERIOD UI CHECK: Updated UI match time to ${_matchTime}");
-                    });
-                    
-                    // For final period, add a small extra delay to ensure fresh timer start
-                    if (isTransitioningToFinalPeriod) {
-                      Future.delayed(Duration(milliseconds: 50), () {
+                  // Update the background service with the new match time
+                  _backgroundService.setMatchTime(appState.session.matchTime);
+                  
+                  // Resume the background timer
+                  _backgroundService.resumeTimer();
+                  
+                  // Start the UI timer
                         _startMatchTimer();
-                      });
-                    } else {
-                      _startMatchTimer();
-                    }
+                  
+                  // Update UI state
+                  _safeSetState(() {
+                    _isPaused = false;
                   });
                   
+                  // Close the dialog
                   Navigator.of(context).pop();
                 },
               ),
@@ -965,73 +927,38 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
 
   void _showStartNextPeriodDialog() {
     final appState = Provider.of<AppState>(context, listen: false);
-    final isDark = appState.isDarkTheme;
     
     // Play period end haptic feedback
     _hapticService.periodEnd(context);
     
-    // Get the period that just ended (current period - 1) and the next period number
-    final justEndedPeriod = appState.session.currentPeriod - 1;  // The period that just ended
-    final nextPeriod = appState.session.currentPeriod;  // The next period (already incremented by endPeriod)
-    final isQuarters = appState.session.matchSegments == 4;
-    
-    // Helper function to get period suffix (1st, 2nd, 3rd, 4th)
-    String getPeriodSuffix(int period) {
-      if (period == 1) return '1st';
-      if (period == 2) return '2nd';
-      if (period == 3) return '3rd';
-      return '${period}th';
-    }
-    
-    // Get the period names based on whether it's halves or quarters
-    final endedPeriodText = isQuarters 
-        ? '${getPeriodSuffix(justEndedPeriod)} Quarter'
-        : '${getPeriodSuffix(justEndedPeriod)} Half';
-    
-    final nextPeriodText = isQuarters 
-        ? '${getPeriodSuffix(nextPeriod)} Quarter'
-        : '${getPeriodSuffix(nextPeriod)} Half';
-    
+    // This was a duplicate period end dialog implementation
+    // We should use the PeriodEndDialog widget instead
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
-        title: Text(
-          '$endedPeriodText ended',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.bold,
-            color: isDark ? Colors.white : Colors.black87,
-          ),
-        ),
-        content: Text(
-          'Start $nextPeriodText?',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.w500,
-            color: isDark ? Colors.white70 : Colors.black87,
-          ),
-        ),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          ElevatedButton(
-            onPressed: () async {
-              await appState.startNextPeriod();
+      builder: (context) => PeriodEndDialog(
+        onNextPeriod: () {
+          // Start the next period
+          appState.startNextPeriod();
+          
+          // Update background service with new match time
+          _backgroundService.setMatchTime(appState.session.matchTime);
+          
+          // Resume the background timer
+          _backgroundService.resumeTimer();
+          
+          // Start the UI timer
+          _startMatchTimer();
+          
+          // Update UI state
+          setState(() {
+            _isPaused = false;
+            appState.session.isPaused = false;
+          });
+          
+          // Close the dialog
               Navigator.of(context).pop();
-              // Restart the timer after the period transition
-              _startMatchTimer();
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green.shade600,
-              padding: EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              textStyle: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            child: Text('Start'),
-          ),
-        ],
+        },
       ),
     );
   }
@@ -1078,15 +1005,38 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     // Provide haptic feedback without awaiting
     _hapticService.playerToggle(context);
 
-    // Toggle player state without awaiting
+    // CRITICAL FIX: Check if match is already running but not in setup mode
+    final isMatchRunning = appState.session.matchRunning && !appState.session.isPaused && !appState.session.isSetup;
+    final wasPlayerActive = appState.session.players[playerName]?.active ?? false;
+    
+    // Toggle player state
     appState.togglePlayer(playerName);
 
-    // Only start the match timer if we're not paused
-    if (!_isPaused && !appState.session.isPaused) {
+    // If we activated a player during a running match, make sure the UI knows the match is running
+    if (isMatchRunning && !wasPlayerActive) {
+      // Force UI refresh to show active time immediately
+      setState(() {});
+      
+      // Ensure background service is aware of player change
+      if (_backgroundService.isRunning) {
+        _backgroundService.syncAppState(appState);
+      }
+    }
+
+    // Only start the match timer if we're not paused and not in setup mode
+    if (!_isPaused && !appState.session.isPaused && !appState.session.isSetup) {
       if (appState.session.players[playerName]?.active ?? false) {
+        // Start match timer if it's not already running
+        if (!appState.session.matchRunning) {
         _safeSetState(() {
           appState.session.matchRunning = true;
         });
+          
+          // If match timer isn't running, start it
+          if (_matchTimer == null) {
+            _startMatchTimer();
+          }
+        }
       }
     }
   }
@@ -1094,6 +1044,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
   // Modify _pauseAll to handle timestamps
   void _pauseAll() async {
     final appState = Provider.of<AppState>(context, listen: false);
+    
+    // If match is complete, prevent any actions
+    if (appState.session.isMatchComplete) {
+      print("Match is complete, ignoring pause/resume actions");
+      return;
+    }
     
     // If in setup mode and there are active players, start the match
     if (appState.session.isSetup) {
@@ -1106,7 +1062,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
               children: [
                 Icon(Icons.warning_amber_rounded, color: Colors.white),
                 SizedBox(width: 8),
-                Text('Select at least one player to start the match'),
+                Expanded( // Wrap Text with Expanded to prevent overflow
+                  child: Text('Select at least one player to start the match'),
+                ),
               ],
             ),
             duration: Duration(seconds: 2),
@@ -1212,10 +1170,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       _initialStartTime = null;
       _accumulatedDrift = 0;
       
-      // Stop background service if it's running
+      // Pause the background timer service (don't stop it completely)
       if (_backgroundService.isRunning) {
-        _backgroundService.stopBackgroundTimer();
-        _backgroundService.stopBackgroundService();
+        // Don't call stopBackgroundTimer or stopBackgroundService - these stop too much
+        // Instead, just pause the timer which keeps the service running
+        _backgroundService.pauseTimer();
       }
       
       await _hapticService.matchPause(context);
@@ -1288,6 +1247,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     
     // Cancel existing timer
     _matchTimer?.cancel();
+    
+    // CRITICAL FIX: Stop the background timer to prevent it from continuing after reset
+    if (_backgroundService != null) {
+      print("Stopping background timer due to session reset");
+      _backgroundService.stopBackgroundTimer();
+    }
     
     _safeSetState(() {
       // Reset UI state
@@ -1632,8 +1597,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                 onTap: () {
                   Navigator.pop(context); // Close action selection dialog
                   _showEndMatchConfirmationDialog(context); // Show confirmation dialog
-                },
-              ),
+              },
+            ),
             // Add more actions here in the future
           ],
         ),
@@ -1652,6 +1617,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     final appState = Provider.of<AppState>(context, listen: false);
     final isDark = appState.isDarkTheme;
     final score = "${appState.session.teamGoals}-${appState.session.opponentGoals}";
+    
+    // Create a ValueNotifier for live updates of time
+    final ValueNotifier<int> dialogMatchTime = ValueNotifier<int>(_matchTime);
+    
+    // Create a timer to update the dialog's time display
+    Timer? dialogTimer;
+    if (appState.session.matchRunning && !appState.session.isPaused) {
+      dialogTimer = Timer.periodic(Duration(milliseconds: 500), (timer) {
+        // Update the ValueNotifier with the latest time from background service
+        dialogMatchTime.value = _backgroundService.getCurrentMatchTime();
+      });
+    }
     
     return showDialog<bool>(
       context: context,
@@ -1696,12 +1673,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
               ),
             ),
             SizedBox(height: 8),
-            Text(
-              'Match Time: ${_formatTime(_matchTime)}',
-              style: TextStyle(
-                color: isDark ? Colors.white70 : Colors.black87,
-                fontSize: 16,
-              ),
+            // Use ValueListenableBuilder to show live updating match time
+            ValueListenableBuilder<int>(
+              valueListenable: dialogMatchTime,
+              builder: (context, time, child) {
+                return Text(
+                  'Match Time: ${_formatTime(time)}',
+                  style: TextStyle(
+                    color: isDark ? Colors.white70 : Colors.black87,
+                    fontSize: 16,
+                  ),
+                );
+              },
             ),
             SizedBox(height: 12),
             Text(
@@ -1717,7 +1700,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
         actions: [
           // Cancel button
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () {
+              // Cancel the timer when dialog is dismissed
+              dialogTimer?.cancel();
+              Navigator.pop(context, false);
+            },
             style: TextButton.styleFrom(
               foregroundColor: isDark ? Colors.white70 : Colors.black54,
             ),
@@ -1731,6 +1718,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
           // End Match button
           ElevatedButton(
             onPressed: () {
+              // Cancel the timer when dialog is dismissed
+              dialogTimer?.cancel();
               // End the match
               _endMatchManually(context);
               // Return true to allow exit
@@ -1751,7 +1740,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
           ),
         ],
       ),
-    );
+    ).then((value) {
+      // Ensure the timer is cleaned up if the dialog is dismissed unexpectedly
+      dialogTimer?.cancel();
+      return value;
+    });
   }
   
   // Add a method to handle manual match ending
@@ -1778,6 +1771,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     
     // End the match through app state
     appState.endMatch();
+    
+    // Make sure all background timers and vibrations are stopped
+    _backgroundService.stopReminderVibrations();
     
     // Sound and haptic feedback
     _audioService.playWhistle();
@@ -3075,88 +3071,205 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     );
   }
 
-  void _checkBackgroundTimeSyncOnResume() {
-    if (_backgroundService.isRunning) {
-      print("App resumed from background, syncing time...");
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    print("App lifecycle state changed to: $state");
+    
+    if (state == AppLifecycleState.resumed) {
+      // App came to foreground
+      final resumeTime = DateTime.now().millisecondsSinceEpoch;
+      print("App resumed at $resumeTime");
       
+      if (_isInitialized) {
       final appState = Provider.of<AppState>(context, listen: false);
       
-      // Sync the time from background
-      _backgroundService.syncTimeOnResume(appState);
-      
-      print("After sync, match time is now: ${appState.session.matchTime}");
-      
-      // Check if a period end was detected in background
-      if (_backgroundService.periodEndDetected) {
-        print("Period end was detected while in background");
-        
-        // Reset the flags after handling
-        _backgroundService.resetEventFlags();
-      }
-      
-      // Check if match end was detected in background
-      if (_backgroundService.matchEndDetected) {
-        print("Match end was detected while in background");
-        
-        // Reset the flags after handling
-        _backgroundService.resetEventFlags();
-      }
-      
-      // Extra check for match end condition
-      final session = appState.session;
-      final isFinalPeriod = session.currentPeriod == session.matchSegments;
-      
-      if (isFinalPeriod && 
-          session.enableMatchDuration && 
-          session.matchTime >= session.matchDuration && 
-          !session.isMatchComplete) {
-        
-        print("Match end condition detected on resume");
-        
-        // Set match time to exactly match duration
-        session.matchTime = session.matchDuration;
-        
-        // End the match
-        appState.endMatch();
-        
-        // Sound and haptic feedback if settings allow
-        if (session.enableSound) {
-          _audioService.playWhistle();
+        // CRITICAL FIX: Immediately start UI timer to prevent stalling
+        if (appState.session.matchRunning && !appState.session.isPaused) {
+          print("Immediately starting UI refresh timer to prevent stalling");
+          _startMatchTimer(initialDelay: 0); // Start with zero delay
         }
-        _hapticService.matchEnd(context);
         
-        // Show end notification
-        _showMatchEndNotification();
+        // Sync the match time using the authoritative method in the background service
+        _backgroundService.syncTimeOnResume(appState);
         
-        // Show dialog
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            showDialog(
-              context: context,
-              barrierDismissible: false,
-              builder: (context) => PeriodEndDialog(
-                // Add isMatchEnd parameter to indicate match completion
-                isMatchEnd: true,
-                onOk: () {
-                  final appState = Provider.of<AppState>(context, listen: false);
-                  
-                  // Use the dedicated method to ensure match end is logged
-                  appState.ensureMatchEndLogged();
-                  
-                  // Close the dialog
-                  Navigator.of(context).pop();
-                },
-              ),
-            );
-          }
+        // Update UI to reflect the synced time from the service
+        setState(() {
+          _matchTime = _backgroundService.getCurrentMatchTime();
+          _matchTimeNotifier.value = _matchTime;
         });
+        
+        // Reset event flags in the background service
+        _backgroundService.resetEventFlags();
+        
+        // If match was running when app went to background, resume timer
+        if (appState.session.matchRunning && !appState.session.isPaused) {
+          print("Resuming background timer because match is running and not paused");
+          _backgroundService.resumeTimer();
+        }
+      }
+      
+      // Reset background tracking variables
+      _backgroundEntryTime = null;
+      _lastKnownMatchTime = null;
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      // Handle both inactive and paused states as potential background transitions
+      final transitionState = state == AppLifecycleState.paused ? "paused" : "inactive";
+      print("App potentially going to background (state: $transitionState)");
+      
+      // Record background time only ONCE per transition sequence
+      if (_backgroundEntryTime == null) { // Check if not already set
+        final backgroundTime = DateTime.now().millisecondsSinceEpoch;
+        print("Recording background entry time at $backgroundTime (state: $transitionState)");
+        _backgroundEntryTime = backgroundTime;
+        _lastKnownMatchTime = _matchTime; // Use the UI's current time
+      } else {
+        print("Background entry time already recorded, skipping (state: $transitionState)");
+      }
+      
+      if (_isInitialized) {
+        final appState = Provider.of<AppState>(context, listen: false);
+        
+        // Cancel UI refresh timer ONLY when paused (inactive might just be temporary)
+        if (state == AppLifecycleState.paused) {
+          print("Cancelling UI refresh timer due to paused state.");
+          _matchTimer?.cancel();
+          _matchTimer = null;
+        }
+        
+        // Sync state and notify service ONCE per transition
+        // Check if _backgroundEntryTime was just set to avoid double calls
+        if (_backgroundEntryTime != null && _lastKnownMatchTime != null) { 
+            print("Ensuring background service state is synced (state: $transitionState)");
+            _backgroundService.syncAppState(appState);
+            print("!!! main_screen: Calling _backgroundService.onAppBackground() (state: $transitionState) !!!"); 
+            _backgroundService.onAppBackground();
+        } else {
+             print("!!! main_screen: Skipping call to onAppBackground - background time not set yet (state: $transitionState)");
+        }
+        
+        // Start background service if needed (typically on paused)
+        if (state == AppLifecycleState.paused && appState.session.matchRunning && !appState.session.isPaused) {
+          if (!_backgroundService.isRunning) {
+             print("Attempting to start background service due to paused state.");
+            _backgroundService.startBackgroundService().then((success) {
+              print("Background service start attempt complete (success: $success)");
+            });
+          }
+        }
+      } else {
+        print("!!! main_screen: Lifecycle change ($transitionState) but _isInitialized is FALSE !!!");
       }
     }
   }
-
-  void _startNextPeriod() {
-    final appState = Provider.of<AppState>(context, listen: false);
-    appState.startNextPeriod();
+  
+  // Helper method to show dialogs with timer management
+  void _showManagedDialog(BuildContext context, Widget dialog) {
+    // Ensure timers aren't destroyed when showing a dialog
+    final wasRunning = _backgroundService.isTimerActive();
+    
+    // Create a new temporary timer to keep checking time updates
+    // even when a dialog is shown
+    Timer? dialogTimer;
+    if (wasRunning) {
+      dialogTimer = Timer.periodic(Duration(milliseconds: 500), (timer) {
+        setState(() {
+          // Keep UI in sync with background timer
+          _matchTime = _backgroundService.getCurrentMatchTime();
+          _matchTimeNotifier.value = _matchTime;
+        });
+      });
+    }
+    
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+      builder: (context) => dialog,
+    ).then((_) {
+      // Clean up temporary timer
+      dialogTimer?.cancel();
+    });
+  }
+  
+  // Modify the existing dialog method to track focus changes
+  void _showDialogWithFocusTracking(Widget dialog) {
+    // Notify background service that screen is losing focus due to dialog
+    //_backgroundService.onScreenFocusChange(false);
+    
+    showDialog(
+      context: context, 
+      barrierDismissible: false,
+      builder: (context) => dialog,
+    ).then((_) {
+      // Notify background service that screen regained focus after dialog closed
+      //_backgroundService.onScreenFocusChange(true);
+    });
+  }
+  
+  // Updated implementation of _showPeriodEndDialog
+  void _showPeriodEndDialog(BuildContext context, int periodNumber) {
+    print("\n\n🔔🔔🔔 _showPeriodEndDialog called for period $periodNumber 🔔🔔🔔\n\n");
+    
+    // Ensure all timers are paused when period end dialog shows
+    _matchTimer?.cancel();
+    _matchTimer = null;
+    
+    // Make sure background timer is paused too
+    print("Pausing background timer before showing dialog");
+    _backgroundService.pauseTimer();
+    
+    // Update app state to reflect paused state
+                  final appState = Provider.of<AppState>(context, listen: false);
+    appState.session.isPaused = true;
+    
+    // Update UI state to reflect paused state
+    setState(() {
+      _isPaused = true;
+    });
+    
+    // Show dialog with error handling
+    try {
+      print("Attempting to show period end dialog");
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext dialogContext) {
+          print("Dialog builder called");
+          return PeriodEndDialog(
+            onNextPeriod: () {
+              print("Period End Dialog: Next Period button pressed");
+              final appState = Provider.of<AppState>(dialogContext, listen: false);
+              
+              // Start the next period
+              appState.startNextPeriod();
+              
+              // Update background service with new match time
+              _backgroundService.setMatchTime(appState.session.matchTime);
+              
+              // Resume the background timer
+              _backgroundService.resumeTimer();
+              
+              // Start the UI timer
+              _startMatchTimer();
+              
+              // Update UI state
+              setState(() {
+                _isPaused = false;
+                appState.session.isPaused = false;
+              });
+                  
+                  // Close the dialog
+              Navigator.of(dialogContext).pop();
+            },
+          );
+        },
+      ).then((_) {
+        print("Period end dialog closed");
+      }).catchError((error) {
+        print("ERROR showing period end dialog: $error");
+      });
+    } catch (e) {
+      print("CRITICAL ERROR trying to show period end dialog: $e");
+    }
   }
 
   // Add this new method to safely exit to home screen
@@ -3196,6 +3309,101 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
         }
       });
     });
+  }
+
+  void _startNextPeriod() {
+    final appState = Provider.of<AppState>(context, listen: false);
+    
+    // Call the app state method to handle period transition
+    appState.startNextPeriod();
+    
+    // Update the background service with the new match time
+    _backgroundService.setMatchTime(appState.session.matchTime);
+    
+    // Auto-start new period by default
+    // Note: We're using a simple check since the session model doesn't have
+    // an enableAutoStartPeriods property
+    _backgroundService.resumeTimer();
+    _startMatchTimer(); // This starts the UI refresh timer
+    
+    setState(() {
+      _isPaused = false;
+    });
+    
+    // Update app state
+    appState.session.matchRunning = true;
+    appState.session.isPaused = false;
+  }
+
+  // Helper for ordinal numbers (1st, 2nd, 3rd, etc.)
+  String _getOrdinal(int number) {
+    if (number == 1) return '1st';
+    if (number == 2) return '2nd';
+    if (number == 3) return '3rd';
+    return '${number}th';
+  }
+  
+  void _showMatchEndDialog(BuildContext context) {
+    print("\n\n🏆🏆🏆 _showMatchEndDialog called - showing match end dialog 🏆🏆🏆\n\n");
+    
+    // Stop the UI refresh timer
+    _matchTimer?.cancel();
+    _matchTimer = null;
+    
+    // Ensure background timer is completely stopped, not just paused
+    print("Stopping background timer for match end");
+    _backgroundService.stopBackgroundTimer();
+    
+    // Explicitly stop any vibration reminders
+    print("Stopping vibration reminders");
+    _backgroundService.stopReminderVibrations();
+    
+    // Update app state
+    final appState = Provider.of<AppState>(context, listen: false);
+    appState.session.isPaused = true;
+    appState.session.matchRunning = false;
+    appState.session.isMatchComplete = true;
+    print("Updated app state: isPaused=${appState.session.isPaused}, isMatchComplete=${appState.session.isMatchComplete}");
+    
+    // Update UI state
+    setState(() {
+      _isPaused = true;
+    });
+    
+    // Now show the match end dialog with error handling
+    try {
+      print("Attempting to show match end dialog");
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          print("Match end dialog builder called");
+          return PeriodEndDialog(
+            isMatchEnd: true,
+            onOk: () {
+              print("Match End Dialog: OK button pressed");
+              final appState = Provider.of<AppState>(dialogContext, listen: false);
+              
+              // Use the dedicated method to ensure match end is logged
+              appState.ensureMatchEndLogged();
+              print("Match end logged in app state");
+              
+              // One more check to stop any vibrations
+              _backgroundService.stopReminderVibrations();
+              
+              // Close the dialog
+              Navigator.of(dialogContext).pop();
+            },
+          );
+        },
+      ).then((_) {
+        print("Match end dialog closed");
+      }).catchError((error) {
+        print("ERROR showing match end dialog: $error");
+      });
+    } catch (e) {
+      print("CRITICAL ERROR trying to show match end dialog: $e");
+    }
   }
 }
 

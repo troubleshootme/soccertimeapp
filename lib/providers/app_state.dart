@@ -171,6 +171,15 @@ class AppState with ChangeNotifier {
       
       _isReadOnlyMode = false;
       notifyListeners();
+
+      // CRITICAL FIX: Reset player times after loading a session
+      for (var player in _session.players.values) {
+        player.totalTime = 0;
+        player.lastActiveMatchTime = null; // Ensure last active time is cleared
+        // player.active = false; // Optionally deactivate all players on load?
+      }
+      print('  Player times reset for loaded session.');
+
     } catch (e) {
       print('Error during session load: $e');
       _currentSessionId = null;

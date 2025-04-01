@@ -373,9 +373,9 @@ class BackgroundService {
       // CRITICAL FIX: Don't increment time if in setup mode
       if (appState.session.isSetup) {
         print("Match in setup mode, not incrementing time");
-        return;
-      }
-      
+            return;
+          }
+          
       // CRITICAL: Use wall-clock time as source of truth for timer updates
       // instead of incrementing our own counter which can drift
       _updateMatchTimeWithWallClock();
@@ -391,10 +391,10 @@ class BackgroundService {
         final periodDuration = appState.session.matchDuration ~/ appState.session.matchSegments;
         final currentPeriodEndTime = periodDuration * appState.session.currentPeriod;
         
-        _updateBackgroundNotification(
+              _updateBackgroundNotification(
           _getMatchTimeNotificationText(_currentMatchTime, currentPeriodEndTime, 
                                         appState.session.currentPeriod, appState.session.matchSegments)
-        );
+              );
       }
     });
   }
@@ -557,7 +557,7 @@ class BackgroundService {
     final matchTimeBeforeSync = appState.session.matchTime;
     final lastUpdateTimeBeforeBackground = appState.session.lastUpdateTime;
     final wasTimerActive = _isTimerActive && appState.session.matchRunning && !appState.session.isPaused;
-    
+
     // --- START Detailed Logging ---
     print('--- App Resume Sync (HIGH PRECISION) ---');
     print('  Now          : $nowSecs ($nowMillis ms)');

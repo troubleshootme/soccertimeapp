@@ -871,50 +871,54 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     final periodText = isQuarters ? 'Quarter' : 'Half';
     final ordinalPeriod = _getOrdinalNumber(periodNumber);
     
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(Icons.sports_soccer, color: Colors.white),
-            SizedBox(width: 8),
-            Text('End of $ordinalPeriod $periodText!'),
-          ],
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.sports_soccer, color: Colors.white),
+              SizedBox(width: 8),
+              Text('End of $ordinalPeriod $periodText!'),
+            ],
+          ),
+          duration: Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.amber.shade700,
+          action: SnackBarAction(
+            label: 'Next',
+            textColor: Colors.white,
+            onPressed: () {
+              final appState = Provider.of<AppState>(context, listen: false);
+              appState.startNextPeriod();
+              _safeSetState(() {
+                _isPaused = false;
+              });
+              _startMatchTimer();
+            },
+          ),
         ),
-        duration: Duration(seconds: 3),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Colors.amber.shade700,
-        action: SnackBarAction(
-          label: 'Next',
-          textColor: Colors.white,
-          onPressed: () {
-            final appState = Provider.of<AppState>(context, listen: false);
-            appState.startNextPeriod();
-            _safeSetState(() {
-              _isPaused = false;
-            });
-            _startMatchTimer();
-          },
-        ),
-      ),
-    );
+      );
+    }
   }
   
   // New method to show match end notification
   void _showMatchEndNotification() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(Icons.sports_score, color: Colors.white),
-            SizedBox(width: 8),
-            Text('Match Complete!'),
-          ],
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.sports_score, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Match Complete!'),
+            ],
+          ),
+          duration: Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.blue.shade700,
         ),
-        duration: Duration(seconds: 4),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Colors.blue.shade700,
-      ),
-    );
+      );
+    }
   }
   
   // Helper method for ordinal numbers (1st, 2nd, 3rd, etc.)
@@ -1125,20 +1129,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       });
       
       // Show a snackbar indicating match start
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              Icon(Icons.sports_soccer, color: Colors.white),
-              SizedBox(width: 8),
-              Text('Match Started!'),
-            ],
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.sports_soccer, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Match Started!'),
+              ],
+            ),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.green.shade700,
           ),
-          duration: Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.green.shade700,
-        ),
-      );
+        );
+      }
       return;  // Exit early since we've handled the setup mode case
     }
     
@@ -1180,20 +1186,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       await _hapticService.matchPause(context);
       
       // Show pause notification
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              Icon(Icons.pause_circle_outline, color: Colors.white),
-              SizedBox(width: 8),
-              Text('Match Paused - Timers Stopped'),
-            ],
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.pause_circle_outline, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Match Paused - Timers Stopped'),
+              ],
+            ),
+            duration: Duration(seconds: 1),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.deepOrangeAccent,
           ),
-          duration: Duration(seconds: 1),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.deepOrangeAccent,
-        ),
-      );
+        );
+      }
     } else {
       // Resuming the match
       // Provide haptic feedback for resume button press
@@ -1219,20 +1227,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
       _startMatchTimer();
       
       // Show resume notification
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              Icon(Icons.play_circle_outline, color: Colors.white),
-              SizedBox(width: 8),
-              Text('Match Resumed - Timers Running'),
-            ],
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.play_circle_outline, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Match Resumed - Timers Running'),
+              ],
+            ),
+            duration: Duration(seconds: 1),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.green.shade700,
           ),
-          duration: Duration(seconds: 1),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.green.shade700,
-        ),
-      );
+        );
+      }
     }
     
     // Save the session state
@@ -1369,12 +1379,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                     await appState.addPlayer(value.trim());
                     
                     if (context.mounted) {
-                      Navigator.pop(context);
-                      // Clear the text and show dialog again for quick adding
-                      textController.clear();
-                      Future.delayed(Duration(milliseconds: 100), () {
-                        if (mounted) _showActualAddPlayerDialog(context);
-                      });
+                      Navigator.pop(context, true); // Close current dialog
+                      // Reopen the dialog immediately for next player
+                      _showActualAddPlayerDialog(context);
                     }
                   } catch (e) {
                     print('Error adding player: $e');
@@ -1390,11 +1397,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
             actions: [
               TextButton(
                 onPressed: () {
-                  Navigator.pop(context);
-                  // Resume the timer if it was running before
-                  if (wasRunning) {
-                    _pauseAll();
-                  }
+                  Navigator.pop(context, false); // Return false on cancel
                 },
                 child: Text('Cancel'),
               ),
@@ -1406,11 +1409,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                       await appState.addPlayer(textController.text.trim());
                       
                       if (context.mounted) {
-                        Navigator.pop(context);
-                        // Resume the timer if it was running before
-                        if (wasRunning) {
-                          _pauseAll();
-                        }
+                        Navigator.pop(context, true); // Close dialog, don't reopen
                       }
                     } catch (e) {
                       print('Error adding player: $e');
@@ -1428,13 +1427,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
           );
         },
       ),
-    ).then((_) {
-      // Clean up
-      focusNode.dispose();
-      textController.dispose();
-      // Resume the timer if it was running before and dialog was dismissed
-      if (wasRunning) {
-        _pauseAll();
+    ).then((result) { // Dialog returns true (added) or false (cancelled)
+      // Clean up the controller AFTER the dialog is closed, with a slight delay
+      Future.delayed(Duration(milliseconds: 50), () {
+        textController.dispose();
+      });
+      
+      // Resume the timer ONLY if the dialog was cancelled (user explicitly stopped adding)
+      // and the timer was running initially.
+      if (result == false && wasRunning) {
+        _pauseAll(); // This toggles the pause state back
       }
     });
   }
@@ -2082,9 +2084,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                 Navigator.pop(context);
               } else if (newName.isEmpty) {
                 // Show error for empty name
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Player name cannot be empty'))
-                );
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Player name cannot be empty'))
+                  );
+                }
               } else if (newName == playerName) {
                 // No change, just close the dialog
                 Navigator.pop(context);
@@ -2143,9 +2147,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     appState.resetPlayerTime(playerName);
     
     // Show confirmation
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Reset time for $playerName')),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Reset time for $playerName')),
+      );
+    }
   }
 
   @override
@@ -2170,13 +2176,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
         }
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: Text(appState.session.sessionName),
-          backgroundColor: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
-          actions: [
-            // Add any additional actions you want to appear in the app bar
-          ],
-        ),
         body: Stack(
           children: [
             // Add a semi-transparent overlay when paused
@@ -2942,8 +2941,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
             // Hint text for empty player list
             if (appState.players.isEmpty)
               Positioned(
-                top: 85,  // Adjusted down from 45
-                right: 0,
+                top: MediaQuery.of(context).padding.top + 130, // Lowered another 20px to match button
+                right: 16,
                 child: Container(
                   padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
@@ -2962,9 +2961,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
               ),
               
             // The FAB with pulse animation
-            Positioned(  // Added Positioned widget to control exact placement
-              top: 40,  // Position it 40 pixels from the top
-              right: 0,  // Keep it aligned to the right
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 85,  // Lowered another 20px
+              right: 16,  // Match whistle button's edge distance
               child: AnimatedBuilder(
                 animation: _pulseAnimation,
                 builder: (context, child) {
@@ -2987,18 +2986,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
                                 ? Colors.amber.withOpacity(0.9)
                                 : Color(0xFF555555).withOpacity(0.8),
                             shape: BoxShape.circle,
-                            boxShadow: shouldPulse ? [
-                              BoxShadow(
-                                color: Colors.amber.withOpacity(0.6),
-                                blurRadius: 10,
-                                spreadRadius: 2,
-                              )
-                            ] : null,
                           ),
+                          child: Padding(
+                            padding: EdgeInsets.all(8),
                           child: Icon(
                             Icons.add,
                             color: Colors.white,
                             size: 23,
+                            ),
                           ),
                         ),
                       ),
@@ -3009,7 +3004,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
             ),
           ],
         ),
-        floatingActionButtonLocation: FloatingActionButtonLocation.endTop,
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat, // Change from endTop
         
         // Add whistle button on the left side
         floatingActionButtonAnimator: FloatingActionButtonAnimator.scaling,
@@ -3090,8 +3085,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
         }
         
         // Sync the match time using the authoritative method in the background service
-        _backgroundService.syncTimeOnResume(appState);
-        
+      _backgroundService.syncTimeOnResume(appState);
+      
         // Update UI to reflect the synced time from the service
         setState(() {
           _matchTime = _backgroundService.getCurrentMatchTime();
@@ -3195,9 +3190,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver, Si
     // Notify background service that screen is losing focus due to dialog
     //_backgroundService.onScreenFocusChange(false);
     
-    showDialog(
-      context: context, 
-      barrierDismissible: false,
+            showDialog(
+              context: context,
+              barrierDismissible: false,
       builder: (context) => dialog,
     ).then((_) {
       // Notify background service that screen regained focus after dialog closed

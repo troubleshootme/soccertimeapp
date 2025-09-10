@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Create service layer foundation
+- [x] 1. Create service layer foundation
   - Create DialogService class to handle all dialog operations (period end, match end, player actions) with identical dialog appearance and behavior
   - Create NotificationService class to handle snackbar notifications with identical styling and timing
   - Create LifecycleService class to handle app lifecycle management with identical behavior
@@ -8,7 +8,7 @@
   - Write unit tests for each service class
   - _Requirements: 5.1, 5.2, 5.3, 6.1, 6.2_
 
-- [ ] 2. Extract and implement MatchTimerWidget
+- [x] 2. Extract and implement MatchTimerWidget
   - Create MatchTimerWidget class with timer management logic that produces identical UI behavior
   - Move all timer-related methods (_startMatchTimer, _stopMatchTimer, _resetMatch, _togglePlayPause) to the widget without changing any timing or behavior
   - Implement background service integration within the timer widget maintaining exact same integration behavior
@@ -17,7 +17,7 @@
   - Create comprehensive unit tests for timer functionality
   - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 3. Extract and implement PlayerManagementWidget
+- [x] 3. Extract and implement PlayerManagementWidget
   - Create PlayerManagementWidget class with player operations
   - Move player-related methods (_showAddPlayerDialog, _togglePlayerByName, _showPlayerActionsDialog, etc.) to the widget
   - Implement player table expansion/collapse functionality

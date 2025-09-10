@@ -25,22 +25,22 @@
   - Create unit tests for player management functionality
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
 
-- [ ] 4. Create UI display components
-- [ ] 4.1 Implement MatchTimeDisplayWidget
+- [x] 4. Create UI display components
+- [x] 4.1 Implement MatchTimeDisplayWidget
   - Create MatchTimeDisplayWidget class for time display
   - Move time formatting and display logic to the widget
   - Implement ValueNotifier integration for reactive updates
   - Create unit tests for time display functionality
   - _Requirements: 4.3, 4.4_
 
-- [ ] 4.2 Implement SessionInfoWidget
+- [x] 4.2 Implement SessionInfoWidget
   - Create SessionInfoWidget class for session information display
   - Move session name and period display logic to the widget
   - Implement proper styling and theme integration
   - Create unit tests for session info display
   - _Requirements: 4.2, 4.4_
 
-- [ ] 4.3 Implement MatchControlsWidget
+- [x] 4.3 Implement MatchControlsWidget
   - Create MatchControlsWidget class for play/pause/reset controls
   - Move control button logic and styling to the widget
   - Implement proper callback integration with parent components

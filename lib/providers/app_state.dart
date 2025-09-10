@@ -8,6 +8,7 @@ import 'package:vibration/vibration.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
 import '../models/match_log_entry.dart';
+import '../services/background_service.dart';
 
 class AppState with ChangeNotifier {
   bool _isDarkTheme = true;
@@ -553,6 +554,9 @@ class AppState with ChangeNotifier {
     _session.isPaused = false;
     _periodsTransitioning = false;
     
+    // Notify background service that match has been stopped/reset
+    BackgroundService().onMatchStop();
+    
     // Save the reset state
     await saveSession();
     
@@ -922,6 +926,9 @@ class AppState with ChangeNotifier {
     _session.hasWhistlePlayed = false;
     _session.matchRunning = false;
     _session.isPaused = false;
+    
+    // Notify background service that match has been stopped/reset
+    BackgroundService().onMatchStop();
     _session.isMatchComplete = false;
     _session.isSetup = true;  // Reset to setup mode
     _session.activeBeforePause = [];
@@ -966,6 +973,9 @@ class AppState with ChangeNotifier {
       _session.isSetup = false;
       _session.matchRunning = true;
       _session.isPaused = false;
+      
+      // Notify background service that match has started
+      BackgroundService().onMatchStart();
       
       // Log match start as the first entry
       _session.addMatchLogEntry('Match Started', entryType: 'match_start');
@@ -1121,6 +1131,9 @@ class AppState with ChangeNotifier {
       _session.matchRunning = true;
       _session.isPaused = false;
       
+      // Notify background service that match has been resumed
+      BackgroundService().onMatchResume();
+      
       // Reactivate players that were active before pause
       final currentMatchTime = _session.matchTime;
       for (var playerName in _session.activeBeforePause) {
@@ -1244,6 +1257,9 @@ class AppState with ChangeNotifier {
     session.isPaused = true;
     // Update timestamp when pausing
     session.lastUpdateTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    
+    // Notify background service that match has been paused
+    BackgroundService().onMatchPause();
 
 
     // Store currently active players for resuming later

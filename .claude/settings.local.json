@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Read(//d//**)",
+      "Bash(mkdir:*)",
+      "Bash(cat:*)",
+      "Bash(flutter analyze:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

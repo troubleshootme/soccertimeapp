@@ -14,10 +14,12 @@ import 'dart:async';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'services/translation_service.dart';
 import 'services/background_service.dart';
+import 'services/background_service_entry.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/foundation.dart';
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 
 // Single global instance for error tracking
 final _errorHandler = ErrorHandler();
@@ -39,6 +41,33 @@ Future<void> _requestPermissions() async {
   }
 }
 
+@pragma('vm:entry-point')
+Future<bool> onIosBackground(ServiceInstance service) async {
+  return true;
+}
+
+Future<void> _initializeBackgroundService() async {
+  final service = FlutterBackgroundService();
+  
+  // Configure the service for Android only
+  await service.configure(
+    androidConfiguration: AndroidConfiguration(
+      onStart: onStart,
+      autoStart: false,
+      isForegroundMode: true,
+      notificationChannelId: 'soccer_timer_channel',
+      initialNotificationTitle: 'Soccer Timer',
+      initialNotificationContent: 'Timer service is ready',
+      foregroundServiceNotificationId: 1,
+    ),
+    iosConfiguration: IosConfiguration(
+      autoStart: false,
+      onForeground: onStart,
+      onBackground: onIosBackground,
+    ),
+  );
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
@@ -47,6 +76,9 @@ void main() async {
   
   // Request necessary permissions at startup
   await _requestPermissions();
+  
+  // Initialize background service
+  await _initializeBackgroundService();
   
   // Initialize background service
   final backgroundService = BackgroundService();
@@ -312,6 +344,9 @@ class _SoccerTimeAppState extends State<SoccerTimeApp> with WidgetsBindingObserv
       // App is in background, close database to prevent locking
       HiveSessionDatabase.instance.close();
       
+      // Notify background service of app lifecycle change
+      BackgroundService().onAppBackground();
+      
       // Don't disable wakelock to keep timers and audio running in background
     } else if (state == AppLifecycleState.resumed) {
       try {
@@ -320,6 +355,9 @@ class _SoccerTimeAppState extends State<SoccerTimeApp> with WidgetsBindingObserv
       } catch (e) {
         print('Error re-enabling wakelock: $e');
       }
+      
+      // Notify background service of app lifecycle change
+      BackgroundService().onAppForeground();
       
       // Reopen database connection
       HiveSessionDatabase.instance.init();
@@ -330,6 +368,9 @@ class _SoccerTimeAppState extends State<SoccerTimeApp> with WidgetsBindingObserv
       } catch (e) {
         print('Error disabling wakelock: $e');
       }
+      
+      // Notify background service of app termination
+      BackgroundService().onAppTerminated();
     }
   }
 

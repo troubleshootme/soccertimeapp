@@ -7,11 +7,40 @@ import 'package:vibration/vibration.dart';
 import '../providers/app_state.dart';
 import 'package:meta/meta.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'flutter_background_service_manager.dart';
+
+// Service state machine for intelligent lifecycle management
+enum ServiceState {
+  idle,           // Service not needed
+  standby,        // Service initialized but not running
+  active,         // Service actively running in background
+  error           // Service in error state
+}
+
+// Match state tracking for service activation decisions
+enum MatchState {
+  stopped,        // No match running
+  running,        // Match actively running
+  paused,         // Match paused by user
+  ended          // Match completed
+}
+
+// App lifecycle state tracking (renamed to avoid conflict with Flutter's AppLifecycleState)
+enum ServiceAppLifecycleState {
+  foreground,     // App visible to user
+  background,     // App backgrounded but alive
+  terminated      // App terminated by system
+}
 
 @pragma('vm:entry-point')
 class BackgroundService {
   static const String BACKGROUND_ENABLED_KEY = 'background_service_enabled';
   static const int PERIOD_END_ALARM_ID = 42; // Unique ID for our period end alarm
+  
+  // State machine variables
+  ServiceState _serviceState = ServiceState.idle;
+  MatchState _matchState = MatchState.stopped;
+  ServiceAppLifecycleState _appState = ServiceAppLifecycleState.foreground;
   
   // Singleton instance
   @pragma('vm:entry-point')
@@ -41,6 +70,9 @@ class BackgroundService {
   // Store a reference to the current AppState
   AppState? _currentAppState;
   
+  // Flutter background service manager
+  final FlutterBackgroundServiceManager _flutterService = FlutterBackgroundServiceManager();
+  
   // Store time tracking variables
   int _currentMatchTime = 0; 
   int _lastUpdateTimestamp = 0;
@@ -49,6 +81,233 @@ class BackgroundService {
   double _partialSeconds = 0.0;  // Track partial seconds to prevent loss during timer switches
   
   // Add listeners for UI updates
+  
+  // State machine management methods
+  
+  /// Updates match state and evaluates service activation
+  void updateMatchState(MatchState newState) {
+    if (_matchState != newState) {
+      print("BackgroundService: Match state changed from $_matchState to $newState");
+      _matchState = newState;
+      _evaluateServiceActivation();
+    }
+  }
+  
+  /// Updates app lifecycle state and evaluates service activation  
+  void updateAppLifecycleState(ServiceAppLifecycleState newState) {
+    if (_appState != newState) {
+      print("BackgroundService: App lifecycle changed from $_appState to $newState");
+      _appState = newState;
+      _evaluateServiceActivation();
+    }
+  }
+  
+  /// Core state machine logic - determines if service should be active
+  void _evaluateServiceActivation() {
+    final shouldBeActive = _shouldServiceBeActive();
+    
+    print("BackgroundService: Evaluating activation - Should be active: $shouldBeActive, Current state: $_serviceState");
+    
+    if (shouldBeActive && _serviceState != ServiceState.active) {
+      _activateService();
+    } else if (!shouldBeActive && _serviceState == ServiceState.active) {
+      _deactivateService();
+    } else if (shouldBeActive && _serviceState == ServiceState.active) {
+      // Already active - just adjust timer frequency based on app state
+      _adjustTimerFrequency();
+    }
+  }
+  
+  /// Adjusts timer frequency and foreground service based on current app state
+  void _adjustTimerFrequency() {
+    if (_backgroundTimer != null) {
+      final currentInterval = _getOptimalUpdateInterval();
+      print("BackgroundService: Adjusting timer frequency to ${currentInterval.inMilliseconds}ms");
+      _startInternalBackgroundTimer(); // This will restart with new frequency
+      
+      // Also manage Android foreground service
+      _manageAndroidForegroundService();
+    }
+  }
+  
+  /// Determines if service should be active based on current states
+  bool _shouldServiceBeActive() {
+    // CORRECTED: Background service should be active whenever match is running
+    // regardless of app foreground/background state to maintain timer consistency
+    return _matchState == MatchState.running;
+  }
+  
+  /// Activates the background service with timing synchronization
+  Future<void> _activateService() async {
+    try {
+      print("BackgroundService: Activating service");
+      _serviceState = ServiceState.active;
+      
+      if (!_isInitialized) {
+        final initialized = await initialize();
+        if (!initialized) {
+          print("BackgroundService: Failed to initialize, setting error state");
+          _serviceState = ServiceState.error;
+          return;
+        }
+      }
+      
+      // CRITICAL: Synchronize timing before starting timer
+      await _synchronizeTimingFromUI();
+      
+      // Start the timer (always runs for consistency)
+      await _startInternalBackgroundTimer();
+      
+      // Start Flutter background service
+      await _flutterService.startTimer(
+        matchTime: _currentMatchTime,
+        period: _currentAppState?.session.currentPeriod ?? 1,
+        isPaused: _isPaused,
+      );
+      
+      // Enable foreground service only when app is backgrounded
+      await _manageAndroidForegroundService();
+      
+      print("BackgroundService: Successfully activated with timing sync");
+    } catch (e) {
+      print("BackgroundService: Error activating service: $e");
+      _serviceState = ServiceState.error;
+    }
+  }
+  
+  /// Manages Android foreground service based on app state
+  Future<void> _manageAndroidForegroundService() async {
+    final needsForegroundService = (_appState == ServiceAppLifecycleState.background);
+    
+    if (needsForegroundService && !_isRunning) {
+      print("BackgroundService: Enabling Android foreground service (app backgrounded)");
+      final success = await FlutterBackground.enableBackgroundExecution();
+      if (success) {
+        _isRunning = true;
+      } else {
+        print("BackgroundService: Failed to enable foreground service");
+      }
+    } else if (!needsForegroundService && _isRunning) {
+      print("BackgroundService: Disabling Android foreground service (app foregrounded)");
+      await FlutterBackground.disableBackgroundExecution();
+      _isRunning = false;
+    }
+  }
+  
+  /// Synchronizes timing from UI timer when background service activates
+  Future<void> _synchronizeTimingFromUI() async {
+    if (_currentAppState == null) return;
+    
+    print("BackgroundService: Synchronizing timing from UI timer");
+    
+    // Get current UI timer state
+    final uiMatchTime = _currentAppState!.session.matchTime;
+    final now = DateTime.now();
+    
+    // Update internal state to match UI
+    _currentMatchTime = uiMatchTime;
+    _referenceWallTime = now;
+    _referenceMatchTime = uiMatchTime;
+    _isTimerActive = true;
+    
+    print("BackgroundService: Timing synchronized - Match time: $uiMatchTime");
+    print("BackgroundService: Reference set to current wall time: $now");
+  }
+  
+  /// Deactivates the background service with timing synchronization
+  Future<void> _deactivateService() async {
+    try {
+      print("BackgroundService: Deactivating service");
+      
+      // CRITICAL: Perform final time synchronization before deactivation
+      _performFinalTimerSync();
+      
+      _serviceState = ServiceState.standby;
+      
+      // Stop background timer
+      _backgroundTimer?.cancel();
+      _backgroundTimer = null;
+      
+      // Stop reminder vibrations
+      stopReminderVibrations();
+      
+      // Disable background execution
+      if (_isRunning) {
+        await FlutterBackground.disableBackgroundExecution();
+        _isRunning = false;
+      }
+      
+      // CRITICAL: Keep timer references for seamless handoff to UI timer
+      // Do NOT reset _referenceWallTime, _referenceMatchTime, etc.
+      // These will be used by UI timer to maintain accuracy
+      
+      print("BackgroundService: Successfully deactivated with timing preserved");
+    } catch (e) {
+      print("BackgroundService: Error deactivating service: $e");
+      _serviceState = ServiceState.error;
+    }
+  }
+  
+  /// Performs final timer synchronization before service deactivation
+  void _performFinalTimerSync() {
+    if (!_isTimerActive || _currentAppState == null) return;
+    
+    print("BackgroundService: Performing final timer sync before deactivation");
+    
+    // Update match time one final time before stopping
+    _updateMatchTimeWithWallClock();
+    
+    // Update AppState with the final accurate time
+    if (_currentAppState != null) {
+      final previousTime = _currentAppState!.session.matchTime;
+      _currentAppState!.session.matchTime = _currentMatchTime;
+      
+      print("BackgroundService: Final sync - Match time updated from $previousTime to $_currentMatchTime");
+      
+      // Notify UI of the final time update
+      _notifyTimeUpdate(_currentMatchTime);
+    }
+  }
+  
+  /// Starts the internal background timer with smart frequency adjustment
+  Future<void> _startInternalBackgroundTimer() async {
+    if (_backgroundTimer != null) {
+      _backgroundTimer!.cancel();
+    }
+    
+    _isTimerActive = true;
+    
+    // Smart frequency based on app state
+    final updateInterval = _getOptimalUpdateInterval();
+    
+    _backgroundTimer = Timer.periodic(updateInterval, (timer) {
+      _updateMatchTimeWithWallClock();
+      
+      // Check if we need to adjust frequency
+      final newInterval = _getOptimalUpdateInterval();
+      if (newInterval != updateInterval) {
+        print("BackgroundService: Update interval changed, restarting timer");
+        _startInternalBackgroundTimer(); // Restart with new interval
+      }
+    });
+    
+    print("BackgroundService: Timer started with ${updateInterval.inMilliseconds}ms interval (app state: $_appState)");
+  }
+  
+  /// Gets optimal update interval based on app state
+  Duration _getOptimalUpdateInterval() {
+    switch (_appState) {
+      case ServiceAppLifecycleState.foreground:
+        // Higher frequency when app is visible for smooth UI
+        return const Duration(milliseconds: 500);
+      case ServiceAppLifecycleState.background:
+        // Lower frequency when backgrounded for battery savings  
+        return const Duration(seconds: 2);
+      case ServiceAppLifecycleState.terminated:
+        // Shouldn't reach here, but fallback
+        return const Duration(seconds: 5);
+    }
+  }
   final List<Function(int matchTime)> _timeUpdateListeners = [];
   final List<Function()> _periodEndListeners = [];
   final List<Function()> _matchEndListeners = [];
@@ -143,6 +402,8 @@ class BackgroundService {
     // Initialize Android Alarm Manager
     await AndroidAlarmManager.initialize();
     
+    // Flutter background service is initialized in main.dart
+    
     // Check if the device supports background execution
     bool hasPermissions = await FlutterBackground.hasPermissions;
     print("Background permissions check: $hasPermissions");
@@ -178,41 +439,35 @@ class BackgroundService {
     }
   }
 
-  // Start the background service
+  // Start the background service (now intelligent based on state machine)
   @pragma('vm:entry-point')
   Future<bool> startBackgroundService() async {
-    print("startBackgroundService called, initialized: $_isInitialized");
+    print("startBackgroundService called - using intelligent lifecycle management");
+    
+    // Initialize if needed (but don't automatically activate)
     if (!_isInitialized) {
       final initialized = await initialize();
       if (!initialized) {
         print("Failed to initialize background service");
         return false;
       }
+      _serviceState = ServiceState.standby;
     }
     
-    if (!_isRunning) {
-      print("Enabling background execution...");
-      final success = await FlutterBackground.enableBackgroundExecution();
-      print("Enable background execution result: $success");
-      if (success) {
-        _isRunning = true;
-        // Save the state to preferences
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool(BACKGROUND_ENABLED_KEY, true);
-        print('Background service started successfully');
-      } else {
-        print('Failed to start background service');
-      }
-      return success;
-    }
+    // The service will activate automatically based on state machine
+    // when both match is running AND app is backgrounded
+    _evaluateServiceActivation();
     
-    print("Background service already running");
-    return true; // Already running
+    return true;
   }
 
   // Stop the background service
   Future<bool> stopBackgroundService() async {
-    print("Stopping background service");
+    print("stopBackgroundService called - updating state machine");
+    
+    // Update states to force service deactivation
+    _matchState = MatchState.stopped;
+    _serviceState = ServiceState.idle;
     
     // Stop reminder vibrations completely
     stopReminderVibrations();
@@ -224,10 +479,11 @@ class BackgroundService {
       print("Error cancelling vibration: $e");
     }
     
-    // Important: Reset all flags and state
+    // Deactivate service immediately
+    await _deactivateService();
+    
+    // Reset all flags and state
     _isTimerActive = false;
-    _backgroundTimer?.cancel();
-    _backgroundTimer = null;
     _lastUpdateTimestamp = 0;
     _currentMatchTime = 0;
     _lastBackgroundTimestamp = null;
@@ -237,22 +493,8 @@ class BackgroundService {
     _matchEndDetected = false;
     _periodsTransitioning = false;
     
-    if (_isRunning) {
-      final success = await FlutterBackground.disableBackgroundExecution();
-      if (success) {
-        _isRunning = false;
-        // Save the state to preferences
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool(BACKGROUND_ENABLED_KEY, false);
-        print('Background service stopped successfully');
-      } else {
-        print('Failed to stop background service');
-      }
-      return success;
-    }
-    
-    print("Background service fully stopped and reset");
-    return true; // Already stopped
+    print("Background service stopped via state machine");
+    return true;
   }
 
   // Check if the background service is running
@@ -274,14 +516,101 @@ class BackgroundService {
     _reminderVibrationTimer = null;
   }
 
+  // Public API for state machine management
+  
+  /// Called when match starts
+  void onMatchStart() {
+    updateMatchState(MatchState.running);
+  }
+  
+  /// Called when match is paused
+  void onMatchPause() {
+    updateMatchState(MatchState.paused);
+  }
+  
+  /// Called when match is resumed from pause
+  void onMatchResume() {
+    updateMatchState(MatchState.running);
+  }
+  
+  /// Called when match ends
+  void onMatchEnd() {
+    updateMatchState(MatchState.ended);
+  }
+  
+  /// Called when match is stopped/reset
+  void onMatchStop() {
+    updateMatchState(MatchState.stopped);
+  }
+  
+  /// Called when app goes to foreground
+  void onAppForeground() {
+    updateAppLifecycleState(ServiceAppLifecycleState.foreground);
+  }
+  
+  /// Called when app goes to background  
+  void onAppBackground() {
+    updateAppLifecycleState(ServiceAppLifecycleState.background);
+  }
+  
+  /// Called when app is terminated
+  void onAppTerminated() {
+    updateAppLifecycleState(ServiceAppLifecycleState.terminated);
+    stopBackgroundService();
+  }
+  
+  /// Get current service state for debugging
+  ServiceState get serviceState => _serviceState;
+  MatchState get matchState => _matchState;
+  ServiceAppLifecycleState get appState => _appState;
+  
+  /// Get accurate current match time (for UI timer handoff)
+  int getAccurateMatchTime() {
+    if (_referenceWallTime != null && _isTimerActive) {
+      // Calculate current time based on wall clock
+      final now = DateTime.now();
+      final elapsedMillis = now.millisecondsSinceEpoch - _referenceWallTime!.millisecondsSinceEpoch;
+      final elapsedSeconds = elapsedMillis / 1000.0;
+      final accurateTime = (_referenceMatchTime + elapsedSeconds).round();
+      
+      print("BackgroundService: Providing accurate time $accurateTime (calculated from reference)");
+      return accurateTime;
+    } else {
+      print("BackgroundService: Providing stored time $_currentMatchTime (no active reference)");
+      return _currentMatchTime;
+    }
+  }
+  
+  /// Get timing references for UI timer synchronization
+  Map<String, dynamic> getTimingReferences() {
+    return {
+      'referenceWallTime': _referenceWallTime?.millisecondsSinceEpoch,
+      'referenceMatchTime': _referenceMatchTime,
+      'currentMatchTime': _currentMatchTime,
+      'isTimerActive': _isTimerActive,
+    };
+  }
+  
+  /// Set timing references from UI timer (for background activation)
+  void setTimingReferences(Map<String, dynamic> references) {
+    if (references['referenceWallTime'] != null) {
+      _referenceWallTime = DateTime.fromMillisecondsSinceEpoch(references['referenceWallTime']);
+      _referenceMatchTime = references['referenceMatchTime'] ?? _currentMatchTime;
+      _currentMatchTime = references['currentMatchTime'] ?? _currentMatchTime;
+      
+      print("BackgroundService: Timing references updated from UI timer");
+      print("  - Reference wall time: ${_referenceWallTime}");
+      print("  - Reference match time: $_referenceMatchTime");  
+      print("  - Current match time: $_currentMatchTime");
+    }
+  }
+  
   // Restore previous state of background service on app launch
   Future<void> restorePreviousState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final wasEnabled = prefs.getBool(BACKGROUND_ENABLED_KEY) ?? false;
-    
-    if (wasEnabled) {
-      await startBackgroundService();
-    }
+    // With intelligent lifecycle management, we don't auto-restore
+    // the service. It will activate based on current match and app state.
+    print("BackgroundService: Restored with intelligent lifecycle management");
+    _serviceState = ServiceState.standby;
   }
 
   @pragma('vm:entry-point')
@@ -495,7 +824,21 @@ class BackgroundService {
     // Update the last actual timestamp
     _lastUpdateTimestamp = nowMillis;
 
+    // Update foreground notification
+    _updateForegroundNotification();
+
     // No need to update _lastTickExpectedTotalSeconds or _partialSeconds in this approach
+  }
+
+  /// Update the Flutter background service with current timer state
+  void _updateForegroundNotification() {
+    if (_flutterService.isServiceRunning && _currentAppState != null) {
+      _flutterService.updateTimer(
+        matchTime: _currentMatchTime,
+        period: _currentAppState!.session.currentPeriod,
+        isPaused: _isPaused,
+      );
+    }
   }
 
   // Replace the _performAbsoluteTimeSync method with an authoritative version
@@ -678,19 +1021,31 @@ class BackgroundService {
   void stopBackgroundTimer() {
     print("Stopping background timer");
     _isTimerActive = false;
+    _isPaused = false;
     _backgroundTimer?.cancel();
     _backgroundTimer = null;
     _lastUpdateTimestamp = 0;
     _lastBackgroundTimestamp = 0;
+    
+    // Stop Flutter background service
+    _flutterService.stopTimer();
   }
 
   void pauseTimer() {
     print("Pausing background timer at match time: $_currentMatchTime");
     _isTimerActive = false;
+    _isPaused = true;
     
     // Cancel the background timer
     _backgroundTimer?.cancel();
     _backgroundTimer = null;
+    
+    // Pause Flutter background service
+    _flutterService.updateTimer(
+      matchTime: _currentMatchTime,
+      period: _currentAppState?.session.currentPeriod ?? 1,
+      isPaused: true,
+    );
     
     // DON'T reset timestamps - just mark timer as inactive
     // This preserves the timer state for when we resume
@@ -711,6 +1066,13 @@ class BackgroundService {
     // Stop any reminder vibrations when timer is resumed
     stopReminderVibrations();
     
+    // Resume Flutter background service
+    _flutterService.updateTimer(
+      matchTime: _currentMatchTime,
+      period: _currentAppState?.session.currentPeriod ?? 1,
+      isPaused: false,
+    );
+    
     // --- Simplified --- 
     // DO NOT reset timestamps or partialSeconds here. 
     // syncTimeOnResume is responsible for setting the correct state before this runs.
@@ -718,6 +1080,7 @@ class BackgroundService {
     // Set timer as active - This allows the existing timer loop (if running) 
     // or a newly created one to execute _updateMatchTimeWithWallClock.
     _isTimerActive = true;
+    _isPaused = false;
     
     // Log current timer state (using the time set by syncTimeOnResume)
     print("Timer marked active. Current Match Time (should be synced): $_currentMatchTime");
@@ -1217,18 +1580,4 @@ class BackgroundService {
     }
   }
 
-  // Add this method to track when the app goes to background
-  void onAppBackground() {
-    print("App going to background - recording state");
-    
-    // Record timestamp and match time when entering background
-    _backgroundEntryTime = DateTime.now().millisecondsSinceEpoch;
-    _lastKnownMatchTime = _currentMatchTime;
-    
-    // Add verification log
-    print("VERIFY - Service State Set: _backgroundEntryTime=$_backgroundEntryTime, _lastKnownMatchTime=$_lastKnownMatchTime");
-    
-    print("Background entry time: $_backgroundEntryTime");
-    print("Last known match time: $_lastKnownMatchTime");
-  }
 } 

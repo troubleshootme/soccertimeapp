@@ -55,6 +55,12 @@
             android:exported="false"
             tools:ignore="ForegroundServicePermission" />
             
+        <!-- Soccer Timer Notification Service -->
+        <service
+            android:name=".NotificationService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false" />
+            
         <!-- Alarm Manager Receiver -->
         <receiver
             android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmBroadcastReceiver"

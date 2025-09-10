@@ -352,6 +352,187 @@ class DialogService {
     );
   }
 
+  /// Show edit player dialog with identical styling and behavior
+  Future<void> showEditPlayerDialog(
+    BuildContext context,
+    String playerName, {
+    required TextEditingController textController,
+    required VoidCallback onSave,
+  }) async {
+    if (!context.mounted) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final isDark = appState.isDarkTheme;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Edit Player',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            letterSpacing: 1.0,
+          ),
+        ),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: InputDecoration(
+            hintText: 'Player Name',
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(
+                color: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
+                width: 2,
+              ),
+            ),
+          ),
+          style: TextStyle(
+            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            fontSize: 16,
+          ),
+        ),
+        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: isDark ? AppThemes.darkText : AppThemes.lightText,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (textController.text.trim().isNotEmpty && textController.text.trim() != playerName) {
+                onSave();
+              }
+              Navigator.pop(context);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show remove player confirmation dialog with identical styling and behavior
+  Future<void> showRemovePlayerConfirmation(
+    BuildContext context,
+    String playerName, {
+    required VoidCallback onRemove,
+  }) async {
+    if (!context.mounted) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final isDark = appState.isDarkTheme;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Remove Player',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            letterSpacing: 0.5,
+          ),
+        ),
+        content: Text('Are you sure you want to remove $playerName?'),
+        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: isDark ? AppThemes.darkText : AppThemes.lightText,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              onRemove();
+              Navigator.pop(context);
+            },
+            child: Text(
+              'Remove',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show add player warning dialog with identical styling and behavior
+  Future<void> showAddPlayerWarningDialog(
+    BuildContext context, {
+    required VoidCallback onProceed,
+  }) async {
+    if (!context.mounted) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final isDark = appState.isDarkTheme;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Add Player During Match',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            letterSpacing: 0.5,
+          ),
+        ),
+        content: Text(
+          'Adding a player during a running match will pause the timer. Do you want to continue?',
+          style: TextStyle(
+            color: isDark ? AppThemes.darkText : AppThemes.lightText,
+            fontSize: 16,
+          ),
+        ),
+        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: isDark ? AppThemes.darkText : AppThemes.lightText,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              onProceed();
+              Navigator.pop(context);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Continue'),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Helper method to show dialogs with timer management
   void _showManagedDialog(BuildContext context, Widget dialog) {
     // Ensure timers aren't destroyed when showing a dialog

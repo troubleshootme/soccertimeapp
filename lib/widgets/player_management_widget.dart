@@ -210,13 +210,9 @@ class _PlayerManagementWidgetState extends State<PlayerManagementWidget> {
 
   /// Show warning dialog for adding player during running match
   void _showAddPlayerWarningDialog(BuildContext context) {
-    _dialogService.showAddPlayerDialog(
+    _dialogService.showAddPlayerWarningDialog(
       context,
-      textController: TextEditingController(),
-      focusNode: widget.addPlayerFocusNode,
-      onAddPlayer: () {
-        // This will be handled by the actual add player dialog
-      },
+      onProceed: () => _showActualAddPlayerDialog(context),
     );
   }
 
@@ -318,120 +314,37 @@ class _PlayerManagementWidgetState extends State<PlayerManagementWidget> {
   void _showEditPlayerDialog(BuildContext context, String playerId, String playerName) {
     final textController = TextEditingController(text: playerName);
     final appState = Provider.of<AppState>(context, listen: false);
-    final isDark = appState.isDarkTheme;
     
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Edit Player',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: isDark ? AppThemes.darkText : AppThemes.lightText,
-            letterSpacing: 1.0,
-          ),
-        ),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-          decoration: InputDecoration(
-            hintText: 'Player Name',
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(
-                color: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
-                width: 2,
-              ),
-            ),
-          ),
-          style: TextStyle(
-            color: isDark ? AppThemes.darkText : AppThemes.lightText,
-            fontSize: 16,
-          ),
-        ),
-        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: TextStyle(
-                color: isDark ? AppThemes.darkText : AppThemes.lightText,
-              ),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (textController.text.trim().isNotEmpty && textController.text.trim() != playerName) {
-                try {
-                  await appState.renamePlayer(playerName, textController.text.trim());
-                  _notificationService.showSuccessNotification(context, 'Player renamed to ${textController.text.trim()}');
-                  widget.onPlayerStateChange?.call();
-                } catch (e) {
-                  _notificationService.showErrorNotification(context, 'Could not rename player: $e');
-                }
-              }
-              Navigator.pop(context);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isDark ? AppThemes.darkPrimaryBlue : AppThemes.lightPrimaryBlue,
-              foregroundColor: Colors.white,
-            ),
-            child: Text('Save'),
-          ),
-        ],
-      ),
+    _dialogService.showEditPlayerDialog(
+      context,
+      playerName,
+      textController: textController,
+      onSave: () async {
+        if (textController.text.trim().isNotEmpty && textController.text.trim() != playerName) {
+          try {
+            await appState.renamePlayer(playerName, textController.text.trim());
+            _notificationService.showSuccessNotification(context, 'Player renamed to ${textController.text.trim()}');
+            widget.onPlayerStateChange?.call();
+          } catch (e) {
+            _notificationService.showErrorNotification(context, 'Could not rename player: $e');
+          }
+        }
+      },
     );
   }
 
   /// Show remove player confirmation dialog with identical behavior to original
   void _showRemovePlayerConfirmation(String playerName) {
     final appState = Provider.of<AppState>(context, listen: false);
-    final isDark = appState.isDarkTheme;
     
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Remove Player',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: isDark ? AppThemes.darkText : AppThemes.lightText,
-            letterSpacing: 0.5,
-          ),
-        ),
-        content: Text('Are you sure you want to remove $playerName?'),
-        backgroundColor: isDark ? AppThemes.darkCardBackground : AppThemes.lightCardBackground,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: TextStyle(
-                color: isDark ? AppThemes.darkText : AppThemes.lightText,
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              appState.removePlayer(playerName);
-              _notificationService.showPlayerRemovedNotification(context, playerName);
-              widget.onPlayerStateChange?.call();
-              Navigator.pop(context);
-            },
-            child: Text(
-              'Remove',
-              style: TextStyle(color: Colors.red),
-            ),
-          ),
-        ],
-      ),
+    _dialogService.showRemovePlayerConfirmation(
+      context,
+      playerName,
+      onRemove: () {
+        appState.removePlayer(playerName);
+        _notificationService.showPlayerRemovedNotification(context, playerName);
+        widget.onPlayerStateChange?.call();
+      },
     );
   }
 

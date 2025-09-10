@@ -47,7 +47,7 @@
   - Create unit tests for control functionality
   - _Requirements: 4.1, 4.4_
 
-- [ ] 5. Integrate services into existing components
+- [x] 5. Integrate services into existing components
   - Update MatchTimerWidget to use DialogService for period/match end dialogs
   - Update PlayerManagementWidget to use DialogService for player dialogs
   - Update all components to use NotificationService for snackbar notifications
